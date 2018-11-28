@@ -1,0 +1,8 @@
+On the Chronos, run the following to set up for this project:
+
+> mkdir /opt/camera/chronos-web-interface
+> cd /opt/camera/chronos-web-interface
+> ln -s /opt/camera/chronos-web-interface ~/web
+> pip3 install flask eventlet python-socketio
+
+Then, deploy & run the app.

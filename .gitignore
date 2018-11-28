@@ -1,0 +1,10 @@
+# Ignore common temporary files.
+.DS_Store
+*\~
+.directory
+
+# Ignore Designer's temporary files.
+**/__pycache__/
+
+# Ignore git version description file, uploaded to the camera for display in the about panel, UI Version string.
+git_description
