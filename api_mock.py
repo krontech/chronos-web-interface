@@ -95,9 +95,11 @@ def control(*args, **kwargs):
 def get(keyOrKeys):
 	"""Call the camera control DBus get method.
 		
-		Accepts str or [str].
+		Accepts key or [key, …], where keys are strings.
 		
-		Returns value or [value], relatively.
+		Returns value or {key:value, …}, respectively.
+		
+		See control's `available_keys` for a list of valid inputs.
 	"""
 	
 	keyList = [keyOrKeys] if isinstance(keyOrKeys, str) else keyOrKeys
@@ -106,6 +108,30 @@ def get(keyOrKeys):
 	if not msg.isValid():
 		raise DBusException("%s: %s" % (msg.error().name(), msg.error().message()))
 	return msg.value()[keyOrKeys] if isinstance(keyOrKeys, str) else msg.value()
+
+
+#Broken for stuff like battery, since cache does not update.
+def get_cached(keyOrKeys):
+	"""Call the camera control DBus get method.
+		
+		Accepts key or [key, …], where keys are strings.
+		
+		Returns value or {key:value, …}, respectively.
+		
+		See control's `available_keys` for a list of valid inputs.
+	"""
+	
+	if isinstance(keyOrKeys, str):
+		if key not in _camState:
+			raise ValueError(f"Unknown value, {key}, to subscribe to. Known values are: {keys(available_keys)}")
+		else:
+			return _camState[keyOrKeys]
+	else:
+		try:
+			unknownKey = next(key for key in keyOrKeys if key not in _camState)
+			raise ValueError(f"Unknown value, {unknownKey}, to subscribe to. Known values are: {keys(available_keys)}")
+		except StopIteration:
+			return {key: _camState[key] for key in keyOrKeys}
 
 
 def set(values):
@@ -208,9 +234,6 @@ def observe(name: str, callback: Callable[[Any], None], saftyCheckForSilencedWid
 		key one syscall at a time as we instantiate each Qt control.
 	"""
 	
-	if not hasattr(callback, '_isSilencedCallback') and saftyCheckForSilencedWidgets:
-		raise CallbackNotSilenced(f"{callback} must consider silencing. Decorate with @silenceCallbacks(callback_name, …).")
-	
 	callback(_camState[name])
 	QDBusConnection.systemBus().connect('com.krontech.chronos.control.mock', '/com/krontech/chronos/control/mock', '',
 		name, callback)
@@ -221,9 +244,6 @@ def observe_future_only(name: str, callback: Callable[[Any], None], saftyCheckFo
 	
 		Useful when `observe`ing a derived value, which observe can't deal with yet.
 	"""
-	
-	if not hasattr(callback, '_isSilencedCallback') and saftyCheckForSilencedWidgets:
-		raise CallbackNotSilenced(f"{callback} must consider silencing. Decorate with @silenceCallbacks(callback_name, …).")
 	
 	QDBusConnection.systemBus().connect('com.krontech.chronos.control.mock', '/com/krontech/chronos/control/mock', '',
 		name, callback)

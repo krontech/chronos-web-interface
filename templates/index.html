@@ -6,13 +6,25 @@
 		
 		<script src="/static/socket.io.2.2.0.min.js"></script>
 		<script src="/static/common.js"></script>
-		<script src="/static/api.js"></script>
-		<script src="/static/index.js"></script>
+		<script defer src="/static/api.js"></script>
+		<script defer src="/static/index.js"></script>
 		
 		<link rel="stylesheet" href="/static/index.css"></link>
 	</head>
 	<body>
 		<h1>Chronos 1.4 App</h1>
-		<p>Max recordable frames: <span id=disp></span></p>
+		<p>Max recordable frames: <span id=totalAvailableFrames></span></p>
+		<p>Initial playback frame: <span id=initialPlaybackFrame></span></p>
+		<p>Current playback frame: <span id=currentPlaybackFrame></span></p>
+		<p>
+			Via HTTP:
+			<br>
+			<button id=setPlaybackFrameHTTP>Set playback frame to 5,000</button>
+			<br>
+			<br>
+			Via WS:
+			<br>
+			<button id=setPlaybackFrameWS>Set playback frame to 10,000</button>
+		</p>
 	</body>
 </html>
