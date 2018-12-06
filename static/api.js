@@ -8,11 +8,13 @@ socket.on('connect', () => {
 })
 
 socket.emit('get', ['totalAvailableFrames'], reply => {
+	if(!reply) { return console.error('get totalAvailableFrames failed') }
 	document.querySelector('#totalAvailableFrames').textContent =
 		reply.totalAvailableFrames
 })
 
 socket.emit('get', ['playbackFrame'], reply => {
+	if(!reply) { return console.error('get playbackFrame failed') }
 	document.querySelector('#initialPlaybackFrame').textContent = reply.playbackFrame
 })
 
