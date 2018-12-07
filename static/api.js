@@ -23,7 +23,6 @@ socket.on('playbackFrame', playbackFrame => {
 	document.querySelector('#currentPlaybackFrame').textContent = playbackFrame
 })
 
-socket.on('ping', () => console.log('ping'))
 socket.on('message', data => console.log('message', data))
 
 
