@@ -1,3 +1,5 @@
+# -*- coding: future_fstrings -*-
+
 """Web server proxying the chronos internal D-Bus API.
 	
 	This web server exposes the video and control APIs for the
@@ -47,7 +49,6 @@ import eventlet
 import eventlet.wsgi
 from flask import *
 import json
-from json.decoder import JSONDecodeError
 from hashlib import sha256
 from hmac import compare_digest
 from functools import wraps
@@ -92,7 +93,7 @@ available_keys = api.control('available_keys')
 def parseJson(string, fallback=None) -> any:
 	try:
 		return json.loads(string)
-	except JSONDecodeError as err:
+	except ValueError as err:
 		dbg()
 		if fallback != None:
 			return fallback
