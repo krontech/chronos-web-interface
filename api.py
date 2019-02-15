@@ -1,3 +1,5 @@
+# -*- coding: future_fstrings -*-
+
 """Python client library for Chronos D-Bus API.
 
 	This module provides a convenient wrapper around the D-Bus API,
@@ -17,41 +19,13 @@ from PyQt5.QtCore import pyqtSlot, QObject
 from PyQt5.QtDBus import QDBusConnection, QDBusInterface, QDBusReply
 from typing import Callable, Any
 
-from control_api import ControlAPI
-from video_api_mock import VideoAPIMock as VideoAPI
+import coordinator_api #importing starts the service
+import video_api
 
 # Set up d-bus interface. Connect to mock system buses. Check everything's working.
 if not QDBusConnection.systemBus().isConnected():
 	print("Error: Can not connect to D-Bus. Is D-Bus itself running?", file=sys.stderr)
 	raise Exception("D-Bus Setup Error")
-
-
-
-
-
-if not QDBusConnection.systemBus().registerService('com.krontech.chronos.control'):
-	sys.stderr.write(f"Could not register control service: {QDBusConnection.systemBus().lastError().message() or '(no message)'}\n")
-	raise Exception("D-Bus Setup Error")
-
-controlAPI = ControlAPI() #This absolutely, positively can't be inlined or it throws error "No such object path ...". Possibly, this is because a live reference must be kept so GC doesn't eat it?
-QDBusConnection.systemBus().registerObject('/com/krontech/chronos/control', controlAPI, QDBusConnection.ExportAllSlots)
-
-if not QDBusConnection.systemBus().registerService('com.krontech.chronos.video.mock'):
-	sys.stderr.write(f"Could not register video service: {QDBusConnection.systemBus().lastError().message() or '(no message)'}\n")
-	raise Exception("D-Bus Setup Error")
-
-videoAPI = VideoAPI() #This absolutely, positively can't be inlined or it throws error "No such object path ...".
-QDBusConnection.systemBus().registerObject('/com/krontech/chronos/video/mock', videoAPI, QDBusConnection.ExportAllSlots)
-
-
-
-
-
-################################
-#    D-Bus Interface Client    #
-################################
-
-
 
 cameraControlAPI = QDBusInterface(
 	'com.krontech.chronos.control', #Service
@@ -59,8 +33,8 @@ cameraControlAPI = QDBusInterface(
 	'', #Interface
 	QDBusConnection.systemBus() )
 cameraVideoAPI = QDBusInterface(
-	'com.krontech.chronos.video.mock', #Service
-	'/com/krontech/chronos/video/mock', #Path
+	'com.krontech.chronos.video_mock', #Service
+	'/com/krontech/chronos/video_mock', #Path
 	'', #Interface
 	QDBusConnection.systemBus() )
 
@@ -81,6 +55,7 @@ if not cameraVideoAPI.isValid():
 		cameraVideoAPI.lastError().message(),
 	), file=sys.stderr)
 	raise Exception("D-Bus Setup Error")
+
 
 
 class DBusException(Exception):
@@ -150,23 +125,41 @@ _camState = control('get', control('available_keys'))
 if(not _camState):
 	raise Exception("Cache failed to populate. This indicates the get call is not working.")
 
-# Keep observe()'s state up-to-date.
-# TODO DDR 2018-06-22: This is broken currently, as connect() never returns here.
-# We're going to ignore the fact that this doesn't work for now, as it will only matter if we reinitialize something in the camApp from this cache. 😒
-__wrappers = [] #Keep a reference to the wrapper objects around. Might be needed so they don't get GC'd.
-for key in _camState.keys():
-	class Wrapper(QObject):
-		def __init__(self):
-			super(Wrapper, self).__init__()
-			
-			QDBusConnection.systemBus().connect('com.krontech.chronos.control', '/com/krontech/chronos/control', '',
-				key, self.updateKey)
+class APIValues(QObject):
+	"""Wrapper class for subscribing to API values in the chronos API."""
+	
+	def __init__(self):
+		super(APIValues, self).__init__()
 		
-		@pyqtSlot('QDBusMessage')
-		def updateKey(self, msg):
-			_camState[key] = msg.arguments()[0]
-			
-	__wrappers += [Wrapper()]
+		QDBusConnection.systemBus().registerObject('/com/krontech/chronos/control_web_hack', self) #The .connect call freezes if we don't do this, or if we do this twice.
+		
+		self._callbacks = {}
+		
+		for key in _camState.keys():
+			QDBusConnection.systemBus().connect('com.krontech.chronos.control', '/com/krontech/chronos/control', '',
+				key, self.__newKeyValue)
+			self._callbacks[key] = []
+	
+	def observe(self, key, callback):
+		"""Add a function to get called when a value is updated."""
+		self._callbacks[key] += [callback]
+	
+	def unobserve(self, key, callback):
+		"""Stop a function from getting called when a value is updated."""
+		raise Exception('unimplimented')
+	
+	@pyqtSlot('QDBusMessage')
+	def __newKeyValue(self, msg):
+		"""Update _camState and invoke any  registered observers."""
+		_camState[msg.member()] = msg.arguments()[0]
+		for callback in self._callbacks[msg.member()]:
+			callback(msg.arguments()[0])
+	
+	def get(self, key):
+		return _camState[key]
+
+apiValues = APIValues()
+
 
 
 class CallbackNotSilenced(Exception):
@@ -211,7 +204,7 @@ def observe(name: str, callback: Callable[[Any], None], saftyCheckForSilencedWid
 			callback: Function called when the state updates and upon subscription.
 				Called with one parameter, the new value. Called when registered
 				and when the value updates.
-			isNonUpdatingCallback=False: Indicates no API requests will be made from
+			saftyCheckForSilencedWidgets=True: Indicates no API requests will be made from
 				this function. This is usually false, because most callbacks *do*
 				cause updates to the API, and it's really hard to detect this. A
 				silenced callback does not update anything, since it should silence
@@ -236,9 +229,8 @@ def observe(name: str, callback: Callable[[Any], None], saftyCheckForSilencedWid
 	if not hasattr(callback, '_isSilencedCallback') and saftyCheckForSilencedWidgets:
 		raise CallbackNotSilenced(f"{callback} must consider silencing. Decorate with @silenceCallbacks(callback_name, …).")
 	
-	callback(_camState[name])
-	QDBusConnection.systemBus().connect('com.krontech.chronos.control', '/com/krontech/chronos/control', '',
-		name, callback)
+	callback(apiValues.get(name))
+	apiValues.observe(name, callback)
 
 
 def observe_future_only(name: str, callback: Callable[[Any], None], saftyCheckForSilencedWidgets=True) -> None:
@@ -250,8 +242,7 @@ def observe_future_only(name: str, callback: Callable[[Any], None], saftyCheckFo
 	if not hasattr(callback, '_isSilencedCallback') and saftyCheckForSilencedWidgets:
 		raise CallbackNotSilenced(f"{callback} must consider silencing. Decorate with @silenceCallbacks(callback_name, …).")
 	
-	QDBusConnection.systemBus().connect('com.krontech.chronos.control', '/com/krontech/chronos/control', '',
-		name, callback)
+	apiValues.observe(name, callback)
 
 
 
@@ -279,10 +270,6 @@ def silenceCallbacks(*elements):
 
 
 
-# Only export the functions we will use. Keep it simple. (This can be complicated later as the need arises.)
-__all__ = ['control', 'video', 'observe'] #This doesn't work. Why?
-
-
 #Launch the API if not imported as a library.
 if __name__ == '__main__':
 	from PyQt5.QtCore import QCoreApplication
@@ -295,8 +282,6 @@ if __name__ == '__main__':
 	
 	print("Self-test: Retrieve battery charge.")
 	print(f"Battery charge: {get('batteryCharge')}")
-	print(f"Battery charge: {control('get', ['batteryCharge'])}")
-	print(f"Battery charge: {video('get', ['batteryCharge'])}")
 	print("Self-test passed. Python API is up and running!")
 	
 	sys.exit(app.exec_())

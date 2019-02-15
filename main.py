@@ -60,7 +60,6 @@ from PyQt5.QtCore import pyqtSlot, QObject, QRunnable, QThreadPool
 from debugger import *; dbg
 import api_mock as api
 
-
 sio = socketio.Server()
 app = Flask('chronos-web-interface')
 qtApp = QtWidgets.QApplication(sys.argv)
@@ -444,6 +443,8 @@ for key in available_keys:
 
 
 if __name__ == '__main__':
+	sys.exit(app.exec_())
+	
 	#Start a new thread to launch the wsgi server from.
 	#Adapted from https://www.pymadethis.com/article/multithreading-pyqt-applications-with-qthreadpool/
 	

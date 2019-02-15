@@ -1,3 +1,5 @@
+# -*- coding: future_fstrings -*-
+
 """Mock for api.py. Allows easier development & testing of the QT interface.
 
 	This mock is less "complete" than the C-based mock, as this mock only returns
@@ -18,20 +20,74 @@
 	Any comment or call in this file should be considered a proposal. It can all be
 	changed if need be.
 """
+from __future__ import unicode_literals
 
 import sys
 import random
-from debugger import *; dbg
+from typing import *
+from time import sleep
 
 from PyQt5.QtCore import pyqtSlot, QObject, QTimer, Qt, QByteArray
 from PyQt5.QtDBus import QDBusConnection, QDBusMessage, QDBusError
 
+
+from debugger import *; dbg
 
 # Set up d-bus interface. Connect to mock system buses. Check everything's working.
 if not QDBusConnection.systemBus().isConnected():
 	print("Error: Can not connect to D-Bus. Is D-Bus itself running?", file=sys.stderr)
 	sys.exit(-1)
 
+
+def action(actionType: str) -> callable:
+	"""Function decorator to denote what class of action function performs.
+		
+		Available actions are 'get', 'set', and 'pure'.
+			- get: Function returns a value. Even if the same input
+				is given, a different value may be returned.
+			- set: Function primarily updates a value. It may return
+				a status. The setting action is most important.
+			- pure: Function returns a value based solely on it's
+				inputs. Pure functions are cachable, for example.
+		
+		Example:
+			@action('get')
+			@property
+			def availableRecordingAnalogGains(self) -> list: 
+				return [{"multiplier":2**i, "dB":6*i} for i in range(0,5)]
+		
+		This is used by the HTTP API to decide what method, POST or GET, a
+		function is accessed by. Setters are POST, getters GET, and pure
+		functions can be accessd by either POST or GET, since args may need
+		a POST body. (GET functions only have simple type coorecion, while
+		POST has full JSON support.)"""
+	
+	actionTypes = {'get', 'set', 'pure'}
+	if actionType not in actionTypes:
+		raise ValueError(f'Action type "{actionType}" not known. Known action types are: {actionTypes}.')
+	
+	def setAction(fn):
+		setattr(fn, '_action', actionType)
+		return fn
+	
+	return setAction
+
+def stringifyTypeClasses(typeClass: Any) -> str:
+	"""Return a type with all classes subbed out with their names."""
+	if hasattr(typeClass, '__name__'): #Basic types, int, str, etc.
+		return typeClass.__name__
+		
+	if hasattr(typeClass, '_name'): #typing types
+		return typeClass._name or 'Union' #Seems to be Unions mess it up, but I don't know how to break them.
+	
+	if hasattr(typeClass, '__class__'):
+		return typeClass.__class__
+	
+	raise Exception(f'Unknown typeClass {typeClass}')
+
+def removeWhitespace(text:str):
+	"""Remove all leading and trailing whitespace from each line of a string."""
+	return '\n'.join(filter(lambda x:x, map(str.strip, text.split('\n'))))
 
 
 ########################
@@ -56,7 +112,7 @@ def resolution_is_valid(hOffset: int, vOffset: int, hRes: int, vRes: int):
 	)
 
 
-def framerate_for_resolution(hRes: int, vRes: int):
+def framerate_for_resolution(hRes: int, vRes: int) -> int:
 	if type(hRes) is not int or type(vRes) is not int:
 		return print("D-BUS ERROR", QDBusError.InvalidArgs, f"framerate must be of type <class 'int'>, <class 'int'>. Got type {type(hRes)}, {type(vRes)}.")
 			
@@ -76,15 +132,18 @@ def framerate_for_resolution(hRes: int, vRes: int):
 #contains x/y/w/h of a new camera resolution only actually resets the camera
 #video pipeline once. Each function which appears in the list is called only
 #once, after all values have been set.
-pendingCallbacks = []
+pendingCallbacks = set()
 
 
 def changeRecordingResolution(state):
-	print(f'Mock: changing recording resolution to xywh {recordingHOffset} {recordingVOffset} {recordingHRes} {recordingVRes}.')
+	if state.videoState == 'preview':
+		print(f"Mock: changing recording resolution to xywh {state.previewHOffset} {state.previewVOffset} {state.previewHRes} {state.previewVRes}.")
+	else:
+		print(f"Mock: changing recording resolution to xywh {state.recordingHOffset} {state.recordingVOffset} {state.recordingHRes} {state.recordingVRes}.")
 
 
 def notifyExposureChange(state):
-	print('TODO: Notify exposure change.')
+	print('Mock: Exposure change callback.')
 	#self.emitControlSignal('maxExposureNs', 7e8) # Example.
 	#self.emitControlSignal('minExposureNs', 3e2)
 
@@ -189,7 +248,7 @@ class State():
 	def recordingHRes(self, value):
 		global pendingCallbacks
 		self._recordingHRes = value
-		pendingCallbacks += [changeRecordingResolution, notifyExposureChange]
+		pendingCallbacks |= set([changeRecordingResolution, notifyExposureChange])
 		
 	@property
 	def recordingHStep(self): #constant, we only have the one sensor
@@ -206,7 +265,7 @@ class State():
 	def recordingVRes(self, value):
 		global pendingCallbacks
 		self._recordingVRes = value
-		pendingCallbacks += [changeRecordingResolution, notifyExposureChange]
+		pendingCallbacks |= set([changeRecordingResolution, notifyExposureChange])
 	
 	@property
 	def recordingVStep(self): #constant, we only have the one sensor
@@ -223,7 +282,7 @@ class State():
 	def recordingHOffset(self, value):
 		global pendingCallbacks
 		self._recordingHOffset = value
-		pendingCallbacks += [changeRecordingResolution]
+		pendingCallbacks |= set([changeRecordingResolution])
 	
 	
 	_recordingVOffset = 480
@@ -236,13 +295,69 @@ class State():
 	def recordingVOffset(self, value):
 		global pendingCallbacks
 		self._recordingVOffset = value
-		pendingCallbacks += [changeRecordingResolution]
+		pendingCallbacks |= set([changeRecordingResolution])
 	
 	
 	recordingAnalogGainMultiplier = 2 #doesn't rebuild video pipeline, only takes gain multiplier
 	
+	
+	_previewHRes = 200 #rebuilds video pipeline
+	
 	@property
-	def availableRecordingAnalogGains(self): 
+	def previewHRes(self): #rebuilds video pipeline
+		return self._previewHRes
+	
+	@previewHRes.setter
+	def previewHRes(self, value):
+		global pendingCallbacks
+		self._previewHRes = value
+		pendingCallbacks |= set([changeRecordingResolution, notifyExposureChange])
+	
+	
+	_previewVRes = 300 
+	
+	@property
+	def previewVRes(self): 
+		return self._previewVRes
+	
+	@previewVRes.setter
+	def previewVRes(self, value):
+		global pendingCallbacks
+		self._previewVRes = value
+		pendingCallbacks |= set([changeRecordingResolution, notifyExposureChange])
+	
+	
+	_previewHOffset = 800 #rebuilds video pipeline
+	
+	@property
+	def previewHOffset(self): #rebuilds video pipeline
+		return self._previewHOffset
+	
+	@previewHOffset.setter
+	def previewHOffset(self, value):
+		global pendingCallbacks
+		self._previewHOffset = value
+		pendingCallbacks |= set([changeRecordingResolution])
+	
+	
+	_previewVOffset = 480
+	
+	@property
+	def previewVOffset(self):
+		return self._previewVOffset
+	
+	@previewVOffset.setter
+	def previewVOffset(self, value):
+		global pendingCallbacks
+		self._previewVOffset = value
+		pendingCallbacks |= set([changeRecordingResolution])
+	
+	
+	previewAnalogGainMultiplier = 2 #doesn't rebuild video pipeline, only takes gain multiplier
+	
+	
+	@property
+	def availableRecordingAnalogGains(self) -> list: 
 		return [{"multiplier":2**i, "dB":6*i} for i in range(0,5)]
 	
 	
@@ -258,18 +373,26 @@ class State():
 		if value > 5000: 
 			raise ValueError("Recording period is 5000ns greater than recording exposure - since exposure can't be negative, the total recording period can't be less than 5000.")
 		self.recordingExposureNs = value - 5000
-		
 	
-	_currentCameraState = 'pre-recording' #There's going to be some interaction about what's valid when, wrt this variable and API calls.
+	#rectangle of the video display area
+	videoDisplayDevice = "camera" #or "http". "camera" includes hdmi out. Not sure if this value is needed, depends if we can get video out over http at the same time we can display it on the back of the camera.
+	videoDisplayX = 0
+	videoDisplayY = 0
+	videoDisplayWidth = 200
+	videoDisplayHeight = 200
+	
+	_videoState = 'pre-recording' #There's going to be some interaction about what's valid when, wrt this variable and API calls.
 	
 	@property
-	def currentCameraState(self):
-		return self._currentCameraState
+	def videoState(self):
+		return self._videoState
 	
-	@currentCameraState.setter
-	def currentCameraState(self, value):
-		assert value in {'pre-recording', 'recording', 'playback', 'saving'}
-		self._currentCameraState = value
+	@videoState.setter
+	def videoState(self, value):
+		global pendingCallbacks
+		assert value in {'pre-recording', 'recording', 'playback', 'saving', 'preview'}
+		self._videoState = value
+		pendingCallbacks |= set([changeRecordingResolution])
 	
 	totalAvailableFrames = 80000 #This is the number of frames we *can* record. There is some overhead for each frame, so the increase in frames as we decrease resolution is not quite linear.
 	
@@ -284,6 +407,8 @@ class State():
 	showWhiteClippingZebraStripes = True
 	showBlackClippingZebraStripes = True
 	disableOverwritingRingBuffer = False #In segmented mode, disable overwriting earlier recorded ring buffer segments. DDR 2018-06-19: Loial figures this was fixed, but neither of us know why it's hidden in the old UI.
+	
+	nanosegmentLengthPct = 50e9 #0 = no segmentation, which actually = all available frames. Multiply by 1e9 to get the percentage of the available record time that a segment takes. eg, 100e-9 is 100% of the buffer, or one segment. 50e9 grants two segments. 40e9 grants two full-length segments… and half-length one?
 	recordedSegments = [{ #Each entry in this list a segment of recorded video. Although currently resolution/framerate is always the same having it in this data will make it easier to fix this in the future if we do.
 		"start": 0,
 		"end": 1000,
@@ -500,7 +625,7 @@ class State():
 	datetime = "2018-09-20T13:23:23.036586" #iso 8601, YYYY-MM-DDTHH:MM:SS.mmmmmm as detailed at https://docs.python.org/3/library/datetime.html#datetime.datetime.isoformat
 	
 	@property
-	def externalStorage(self) -> [{str:any}]:
+	def externalStorage(self) -> List[Dict[str, Union[str, int]]]:
 		"""External storage device partitions.
 			
 			Returns a list of maps, one map per partition on each
@@ -509,8 +634,8 @@ class State():
 			
 			Maps contain the following keys:
 				name: The given name of the partition.
-				device: The name of the device the partition is on. If
-					a device has more than one partition, each
+				device: The name of the device the partition is on.
+					If a device has more than one partition, each
 					partition will have the same device name.
 				path: Where in the [camera] filesystem the device is
 					mounted to. Unlike name, guaranteed to be unique.
@@ -518,6 +643,8 @@ class State():
 				free: The amount of available space on the partition,
 					in bytes. Note that size and free may not fit in
 					a 32-bit integer.
+				interface: Either a "usb" drive, an "sd" card port,
+					or a "network" mount.
 			"""
 		
 		return [{
@@ -526,24 +653,38 @@ class State():
 			"path": "/dev/sda",
 			"size": 1294839100, #bytes, 64-bit positive integer
 			"free": 4591,
+			"interface": "usb", #"usb" or "sd"
 		},{
 			"name": "Toastdesk",
 			"device": "sdc1",
 			"path": "/dev/sdc1",
 			"size": 2930232316000,
 			"free": 1418341032982,
+			"interface": "usb", 
 		}]
 	
 	networkPassword = 'chronos' #Change this to be initally blank in the non-mock API. A blank password *means* no network access at all.
-	localHTTPAccess = True
+	localHTTPAccess = True #If this changes, something must shut down or start the web server. The only thing the server will do is start up on the right HTTP port; it will even need to be restarted if that changes. (However, the server does not need to be restarted for changes to the password. The hash is re-updated as it changes.)
 	localSSHAccess = True
 	remoteHTTPAccess = True
 	remoteSSHAccess = True
-	HTTPPort = 8080
-	SSHPort = 8022
+	HTTPPort = 80
+	SSHPort = 22
+	
+	networkStorageAddress = "smb://192.168.1.201/Something"
+	networkStorageUsername = "ns username"
+	_networkStoragePassword = "ns password" #This can't be a secure storage method, but I don't know how else to do it. Perhaps there is no way? Do we have a keychain on the OS we can use that would help, given we don't have password-authenticated logins?
 	
 	@property
-	def networkInterfaces(self) -> [{str:str}]:
+	def networkStoragePassword(self):
+		return "•••••••" if self._networkStoragePassword else "" #Don't make reading out the password easy, at least. This interface should support write-only passwords in the future, too.
+	
+	@networkStoragePassword.setter
+	def networkStoragePassword(self, value):
+		self._networkStoragePassword = value
+	
+	@property
+	def networkInterfaces(self) -> List[Dict[str,str]]:
 		"""Roughly; the enumeration of attached, active network devices."""
 		return [{
 			'id': 'enp0s25',
@@ -609,42 +750,45 @@ class ControlAPIMock(QObject):
 		self._timer4.start(1000) #ms
 
 	
-	def emitControlSignal(self, name, value=None):
+	def emitControlSignal(self, name: str, value=None) -> None:
 		"""Emit an update signal, usually for indicating a value has changed."""
-		signal = QDBusMessage.createSignal('/com/krontech/chronos/control/mock', 'com.krontech.chronos.control.mock', name)
+		signal = QDBusMessage.createSignal('/com/krontech/chronos/control_mock', 'com.krontech.chronos.control_mock', name)
 		signal << getattr(state, name) if value is None else value
 		QDBusConnection.systemBus().send(signal)
 	
-	def emitError(self, message):
+	def emitError(self, message: str) -> QDBusError:
 		error = QDBusMessage.createError(QDBusError.Other, message)
 		QDBusConnection.systemBus().send(error)
 		return error
 	
 	
-	@pyqtSlot(QDBusMessage, result='QVariantMap')
-	def get(self, msg):
-		keys = msg.arguments()[0]
+	@action('get')
+	@pyqtSlot('QVariantList', result='QVariantMap')
+	def get(self, keys: List[str]) -> Union[Dict[str, Any], str]:
 		retval = {}
 		
 		for key in keys:
 			if key[0] is '_' or not hasattr(state, key): # Don't allow querying of private variables.
-				#QDBusMessage.createErrorReply does not exist in PyQt5, and QDBusMessage.errorReply can't be sent.
-				return print("D-BUS ERROR", QDBusError.UnknownProperty, f"The value '{key}' is not known.\nValid keys are: {[i for i in dir(state) if i[0] != '_']}")
+				#QDBusMessage.createErrorReply does not exist in PyQt5, and QDBusMessage.errorReply can't be sent. As far as I can tell, we simply can not emit D-Bus errors.
+				#Can't reply with a single string, either, since QVariantMap MUST be key:value pairs and we don't seem to have unions or anything.
+				#The type overloading, as detailed at http://pyqt.sourceforge.net/Docs/PyQt5/signals_slots.html#the-pyqtslot-decorator, simply does not work in this case. The last pyqtSlot will override the first pyqtSlot with its return type.
+				return {'ERROR': dump(f"The value '{key}' is not a known key to set.\nValid keys are: {[i for i in dir(state) if i[0] != '_']}")}
 			
 			retval[key] = getattr(state, key)
 		
 		return retval
 	
 	
+	@action('set')
 	@pyqtSlot('QVariantMap')
-	def set(self, data):
+	def set(self, data: Dict[str, Any]) -> None:
 		# Check all errors first to avoid partially applying an update.
 		for key, value in data.items():
 			if key[0] is '_' or not hasattr(state, key):  # Don't allow setting of private variables.
 				# return self.sendError('unknownValue', f"The value '{key}' is not known.\nValid keys are: {[i for i in dir(state) if i[0] != '_']}")
-				return print("D-BUS ERROR", QDBusError.UnknownProperty, f"The value '{key}' is not known.\nValid keys are: {[i for i in dir(state) if i[0] != '_']}")
+				return {'ERROR': dump(f"The value '{key}' is not a known key to set.\nValid keys are: {[i for i in dir(state) if i[0] != '_']}")}
 			if not isinstance(value, type(getattr(state, key))):
-				return print("D-BUS ERROR", QDBusError.InvalidSignature, f"Can not set '{key}' to {value}.\n(Previously {getattr(state, key)}.) Expected {type(getattr(state, key))}, got {type(value)}.")
+				return {'ERROR': dump(f"Can not set '{key}', currently {getattr(state, key)}, to {value}.\nExpected {type(getattr(state, key))}, got {type(value)}.")}
 		
 		# Set only changed variables. Changing can be quite involved, such as with recordingHRes.
 		for key, value in data.items():
@@ -654,116 +798,151 @@ class ControlAPIMock(QObject):
 				print(f"updated {key} to {value}")
 				
 		
-		#Call each callback only once. For long-running callbacks ior multi-arg tasks.
-		global pendingCallbacks
-		[cb(_state) for cb in {cb for cb in pendingCallbacks}]
-		pendingCallbacks = []
+		#Call each callback set. Good for multi-arg tasks such as recording resolution and trigger state.
+		for cb in pendingCallbacks:
+			cb(state)
+		pendingCallbacks.clear()
 	
 	
+	@action('set')
 	@pyqtSlot()
-	def power_down(self):
+	def power_down(self) -> None:
 		print('powering down camera…')
 		print('aborted, mock will not shut down machine')
+	
+	
+	@action('get')
+	@pyqtSlot(result="QVariantList")
+	def available_keys(self) -> List[str]:
+		keys = [i for i in dir(state) if i[0] != '_'] #Don't expose private items.
+		return keys
+	
+	
+	@action('get')
+	@pyqtSlot(result="QVariantList")
+	def available_calls(self) -> List[Dict[str, str]]:
+		return [{
+			"name": i,
+			"args": { #Return args: type, stripping class down to string name for D-Bus.
+				argName: stringifyTypeClasses(typeClass) 
+				for argName, typeClass in 
+				get_type_hints(getattr(self, i)).items()
+			},
+			"action": getattr(self, i)._action, #Type
+		} for i in self.__class__.__dict__ 
+			if hasattr(getattr(self, i), '_action') ]
 		
 	
-	@pyqtSlot(result=list)
-	def available_keys(self):
-		return [i for i in dir(state) if i[0] != '_']
-		
-	
+	@action('get')
 	@pyqtSlot(int, int, result=int)
-	def framerate_for_resolution(self, hRes: int, vRes: int):
+	def framerate_for_resolution(self, hRes: int, vRes: int) -> int:
 		return framerate_for_resolution(hRes, vRes)
 	
-	
+	@action('get')
 	@pyqtSlot(result=bool)
-	def resolution_is_valid(self, hOffset: int, vOffset: int, hRes: int, vRes: int): #xywh px
+	def resolution_is_valid(self, hOffset: int, vOffset: int, hRes: int, vRes: int) -> bool: #xywh px
 		return resolution_is_valid(hOffset, vOffset, hRes, vRes)
 	
 	
+	@action('set')
 	@pyqtSlot(str)
-	def autoFactoryCal(self, safeword: str):
-		if(safeword != 'tempest shadow'): #The safeword (which is not a password, and confers no security) is a safty precaution to prevent the API call from being placed inadvertently during normal scripting. It can be quite hard to undo the effects these factory functions.
-			print('incorrect safeword specified')
+	def autoFactoryCal(self, passphrase: str) -> None:
+		if(passphrase != 'correct horse battery staple'): #The passphrase (which is not a password, and confers no security) is a safty precaution to prevent the API call from being placed inadvertently during normal scripting. It can be quite hard to undo the effects these factory functions.
+			print('incorrect passphrase specified')
 			return
 		
 		print('MOCK: perform auto factory calibration')
 	
 	
+	@action('set')
 	@pyqtSlot(str)
-	def adcOffsetCal(self, safeword: str):
-		if(safeword != 'tempest shadow'): 
-			print('incorrect safeword specified')
+	def adcOffsetCal(self, passphrase: str) -> None:
+		if(passphrase != 'correct horse battery staple'): 
+			print('incorrect passphrase specified')
 			return
 		
 		print('MOCK: perform adc offset calibration')
 	
 	
+	@action('set')
 	@pyqtSlot(str)
-	def columnGainCal(self, safeword: str):
-		if(safeword != 'tempest shadow'): 
-			print('incorrect safeword specified')
+	def columnGainCal(self, passphrase: str) -> None:
+		if(passphrase != 'correct horse battery staple'): 
+			print('incorrect passphrase specified')
 			return
 		
 		print('MOCK: perform column gain calibration')
 	
 	
+	@action('set')
 	@pyqtSlot(str)
-	def blackCalAllStandard(self, safeword: str):
-		if(safeword != 'tempest shadow'):
-			print('incorrect safeword specified')
+	def blackCalAllStandard(self, passphrase: str) -> None:
+		if(passphrase != 'correct horse battery staple'):
+			print('incorrect passphrase specified')
 			return
 		
 		print('MOCK: perform black calibration, all standard resolutions')
 	
 	
+	@action('set')
 	@pyqtSlot(str)
-	def whiteRefCal(self, safeword: str):
-		if(safeword != 'tempest shadow'): 
-			print('incorrect safeword specified')
+	def whiteRefCal(self, passphrase: str) -> None:
+		if(passphrase != 'correct horse battery staple'): 
+			print('incorrect passphrase specified')
 			return
 		
 		print('MOCK: perform white reference calibration')
 	
 	
+	@action('set')
 	@pyqtSlot()
-	def takeStillReferenceForMotionTriggering(self):
+	def takeStillReferenceForMotionTriggering(self) -> None:
 		print('MOCK: train stillness for motion triggering')
 	
 	
+	@action('set')
 	@pyqtSlot()
-	def setWhiteBalance(self):
+	def setWhiteBalance(self) -> None:
 		print('MOCK: set white balance')
 	
 	
+	@action('set')
 	@pyqtSlot()
-	def doBlackCalibration(self):
+	def doBlackCalibration(self) -> None:
 		print('MOCK: do black calibration')
 	
 	
+	@action('set')
 	@pyqtSlot(str, result='QVariantMap')
-	def saveCalibrationData(self, toFolder: str):
+	def saveCalibrationData(self, toFolder: str) -> Union[Dict[str, str], None]:
 		#return self.emitError('A fire! Oh no!') #Doesn't work.
 		print(f'MOCK: Save calibration data to {toFolder}.')
 		return {"message": "Out of space."} if 'sda' in toFolder else None
 	
+	@action('set')
 	@pyqtSlot(str, result='QVariantMap')
 	def loadCalibrationData(self, fromFolder: str):
 		print(f'MOCK: Load calibration data.')
 		return None
 	
+	@action('set')
 	@pyqtSlot(str)
 	def applySoftwareUpdate(self, fromFolder: str):
 		print(f'MOCK: Apply software update.')
 		return None
 	
+	@action('get')
 	@pyqtSlot(str, int, result='QVariantMap')
-	def waterfallMotionMap(self, segmentId: str, startFrame: int) -> dict:
+	def waterfallMotionMap(self, segmentId: str, startFrame: int) -> Dict[str, Union[str, bytearray]]:
 		"""Get a waterfall-style heatmap of movement in each of the 16 quadrants of the frame.
 			
-			Arguments:
-				segmentId: As returned in from recordedSegments. If no segment exists, an empty
-					array will be returned.
+			Arguments (should be):
+				startFrame: frame to start from, as in recordedSegments, or 0.
+				endFrame: frame to end at, as in recordedSegments or totalRecordedFrames.
+			
+			Note that both startFrame and endFrame are clamped to valid numbers, so
+			providing 0 will *always* result in the first frame, and INT_MAX will always
+			result in the last frame.
 			"""
 		startFrame = startFrame % 1024 #Cycle period of data below.
 		
@@ -794,11 +973,20 @@ class ControlAPIMock(QObject):
 		}
 	
 	
+	@action('set')
 	@pyqtSlot('QVariantList', result='QVariantList')
-	def saveRegions(self, regions: [{"start": int, "end": int, "id": str, "path": str, "format": {'fps': int, 'bpp': int, 'maxBitrate': int}}]) -> [{"success": bool, "msg": str, id: "str"}]:
+	def saveRegions(self, regions: List[Dict[str, Union[int, str, Dict[str, int]]]]) -> List[Dict[str, Union[bool, str]]]:
 		"""Save video clips to disk or network.
 			
 			Accepts a list of regions, returns a list of statuses."""
+		
+		#Regions: [{
+		#	"start": int, 
+		#	"end": int, 
+		#	"id": str,
+		#	"path": str,
+		#	"format": {'fps': int, 'bpp': int, 'maxBitrate': int},
+		#}]
 		
 		return [{ #Each entry in this list a segment of recorded video. Although currently resolution/framerate is always the same having it in this data will make it easier to fix this in the future if we do.
 			"id": "ldPxTT5R",
@@ -809,3 +997,81 @@ class ControlAPIMock(QObject):
 			"success": False,
 			"message": "Network error.",
 		}]
+	
+	@action('set')
+	@pyqtSlot(str)
+	def formatStorage(self, device):
+		"""Reformat the block device for video saving.
+			
+			See the gettable "externalStorage" property for a list of
+			mounted external storage partitions. Each partition has a
+			device associated with it. Formatting the device will
+			coalesce and erase all existing partitions and files."""
+		
+		print(f"MOCK: Formatting device {device}…", end='', flush=True)
+		sleep(2)
+		print(" done.")
+	
+	@action('set')
+	@pyqtSlot(str)
+	def unmount(self, path):
+		"""Unmount the partition mounted at path.
+			
+			See the gettable "externalStorage" property for a list of
+			mounted external storage partitions. To remount a device,
+			either reinsert it or SSH into the camera and use the
+			mount command. (See "man mount" for more details.)"""
+		
+		print(f"MOCK: Unmounting {path}.")
+	
+	@action('get')
+	@pyqtSlot(result=str)
+	def df(self, ):
+		"""Run the df linux command, and return the output.
+			
+			Basically, returns a string with information about each partition.
+			Forms a nice little table if printed with a fixed-width font. See
+			"man df" for more details."""
+		
+		return removeWhitespace("""
+			NAME        MAJ:MIN RM   SIZE RO TYPE MOUNTPOINT
+			mmcblk0     179:0    0   7.4G  0 disk
+			|-mmcblk0p1 179:1    0  39.2M  0 part /boot
+			`-mmcblk0p2 179:2    0   7.4G  0 part /
+		""")
+	
+	
+	@action('set')
+	@pyqtSlot(result=str)
+	def testNetworkStorageCredentials(self):
+		"""Check the remote file share works.
+			
+			Returns an error message upon failure, or an empty string
+			on success."""
+		
+		print("MOCK: Checking network storage…", end='', flush=True)
+		sleep(3)
+		print(" ok.")
+		return ""
+
+
+if not QDBusConnection.systemBus().registerService('com.krontech.chronos.control_mock'):
+	sys.stderr.write(f"Could not register control service: {QDBusConnection.systemBus().lastError().message() or '(no message)'}\n")
+	raise Exception("D-Bus Setup Error")
+
+controlAPI = ControlAPIMock() #This absolutely, positively can't be inlined or it throws error "No such object path ...". Possibly, this is because a live reference must be kept so GC doesn't eat it?
+QDBusConnection.systemBus().registerObject('/com/krontech/chronos/control_mock', controlAPI, QDBusConnection.ExportAllSlots)
+
+
+#Launch the API if not imported as a library.
+if __name__ == '__main__':
+	from PyQt5.QtCore import QCoreApplication
+	import signal
+	
+	app = QCoreApplication(sys.argv)
+	
+	#Quit on ctrl-c.
+	signal.signal(signal.SIGINT, signal.SIG_DFL)
+	
+	print("Running control api mock.")
+	sys.exit(app.exec_())

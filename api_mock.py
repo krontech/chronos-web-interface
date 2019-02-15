@@ -1,3 +1,5 @@
+# -*- coding: future_fstrings -*-
+
 """Mock for api.py. Allows easier development & testing of the QT interface.
 
 	This mock is less "complete" than the C-based mock, as this mock only returns
@@ -11,8 +13,9 @@
 	print(api.control('get_video_settings'))
 
 	Remarks:
-	Unlike the api_mock in chronos-gui-2, this one is *not* self-hosting. It
-	needs to connect to something, such as the API chronos-gui-2 self-hosts.
+	The service provider component can be extracted if interaction with the HTTP
+	api is desired. While there is a more complete C-based mock, in chronos-cli, it
+	is exceptionally hard to add new calls to.
 """
 
 import sys
@@ -22,27 +25,27 @@ from PyQt5.QtCore import pyqtSlot, QObject
 from PyQt5.QtDBus import QDBusConnection, QDBusInterface, QDBusReply
 from typing import Callable, Any
 
+import coordinator_api_mock #importing starts the service
+import video_api_mock
 
-
-#####################################
-#    Mock D-Bus Interface Client    #
-#####################################
-
-
+# Set up d-bus interface. Connect to mock system buses. Check everything's working.
+if not QDBusConnection.systemBus().isConnected():
+	print("Error: Can not connect to D-Bus. Is D-Bus itself running?", file=sys.stderr)
+	raise Exception("D-Bus Setup Error")
 
 cameraControlAPI = QDBusInterface(
-	'com.krontech.chronos.control.mock', #Service
-	'/com/krontech/chronos/control/mock', #Path
+	'com.krontech.chronos.control_mock', #Service
+	'/com/krontech/chronos/control_mock', #Path
 	'', #Interface
 	QDBusConnection.systemBus() )
 cameraVideoAPI = QDBusInterface(
-	'com.krontech.chronos.video.mock', #Service
-	'/com/krontech/chronos/video/mock', #Path
+	'com.krontech.chronos.video_mock', #Service
+	'/com/krontech/chronos/video_mock', #Path
 	'', #Interface
 	QDBusConnection.systemBus() )
 
-cameraControlAPI.setTimeout(1000) #Default is -1, which means 25000ms. 25 seconds is too long to go without some sort of feedback. In worst-case, when someone's using the GUI (say a slider) and pegging the CPU, the response can take a little while. (290.8372ms max so far)
-cameraVideoAPI.setTimeout(1000)
+cameraControlAPI.setTimeout(16) #Default is -1, which means 25000ms. 25 seconds is too long to go without some sort of feedback, and the only real long-running operation we have - saving - can take upwards of 5 minutes. Instead of setting the timeout to half an hour, we should probably use events which are emitted as the event progresses. One frame (at 60fps) should be plenty of time for the API to respond, and also quick enough that we'll notice any slowness. The mock replies to messages in under 1ms, so I'm not too worried here.
+cameraVideoAPI.setTimeout(16)
 
 if not cameraControlAPI.isValid():
 	print("Error: Can not connect to Mock Camera Control D-Bus API at %s. (%s: %s)" % (
@@ -58,6 +61,7 @@ if not cameraVideoAPI.isValid():
 		cameraVideoAPI.lastError().message(),
 	), file=sys.stderr)
 	raise Exception("D-Bus Setup Error")
+
 
 
 class DBusException(Exception):
@@ -110,30 +114,6 @@ def get(keyOrKeys):
 	return msg.value()[keyOrKeys] if isinstance(keyOrKeys, str) else msg.value()
 
 
-#Broken for stuff like battery, since cache does not update.
-def get_cached(keyOrKeys):
-	"""Call the camera control DBus get method.
-		
-		Accepts key or [key, …], where keys are strings.
-		
-		Returns value or {key:value, …}, respectively.
-		
-		See control's `available_keys` for a list of valid inputs.
-	"""
-	
-	if isinstance(keyOrKeys, str):
-		if key not in _camState:
-			raise ValueError(f"Unknown value, {key}, to subscribe to. Known values are: {keys(available_keys)}")
-		else:
-			return _camState[keyOrKeys]
-	else:
-		try:
-			unknownKey = next(key for key in keyOrKeys if key not in _camState)
-			raise ValueError(f"Unknown value, {unknownKey}, to subscribe to. Known values are: {keys(available_keys)}")
-		except StopIteration:
-			return {key: _camState[key] for key in keyOrKeys}
-
-
 def set(values):
 	"""Call the camera control DBus set method. Accepts {str: value}."""
 	
@@ -151,131 +131,50 @@ _camState = control('get', control('available_keys'))
 if(not _camState):
 	raise Exception("Cache failed to populate. This indicates the get call is not working.")
 
-# Keep observe()'s state up-to-date.
-# TODO DDR 2018-06-22: This is broken currently, as connect() never returns here.
-# We're going to ignore the fact that this doesn't work for now, as it will only matter if we reinitialize something in the camApp from this cache. 😒
-__wrappers = [] #Keep a reference to the wrapper objects around. Might be needed so they don't get GC'd.
-for key in _camState.keys():
-	class Wrapper(QObject):
-		def __init__(self):
-			super(Wrapper, self).__init__()
-			
-			QDBusConnection.systemBus().connect('com.krontech.chronos.control.mock', '/', '',
-				key, self.updateKey)
-		
-		@pyqtSlot('QDBusMessage')
-		def updateKey(self, msg):
-			_camState[key] = msg.arguments()[0]
-			
-	__wrappers += [Wrapper()]
-
-
-class CallbackNotSilenced(Exception):
-	"""Raised when the API is passed an unsilenced callback for an event.
+class APIValues(QObject):
+	"""Wrapper class for subscribing to API values in the chronos API."""
 	
-		It's important to silence events (with `@silenceCallbacks`) on Qt elements
-		because they'll update the API with their changes otherwise. If more than
-		one value is being processed by the API at the same time, it can cause an
-		infinite loop where each value changes the element and the element emits
-		another change event.
+	def __init__(self):
+		super(APIValues, self).__init__()
 		
-		This is explicitly checked because having an unsilenced element emit an
-		update will usually work. The update will (asychronously) wind its way
-		through the system, and when it gets back to updating the emitting element
-		the element will have the same value and will not emit another update.
-		However, if the element has a different value, then it will change back.
-		The update for the change will be in flight by this time, and the two will
-		enter an infinite loop of updating the element as they fight. Any further
-		changes made to the element will now emit more update events which will
-		themselves loop. Since this is very hard to detect reliably in testing,
-		we force at least the consideration of silencing elements on the callback,
-		since it makes it much easier to track down an issue by reading the
-		callback and making sure it silences the elements it changes. We can't
-		reasonably test if it silences the right elements unfortunately. This
-		could be solved by not emitting events to the client which initiated them,
-		but while fairly trivial with the socket.io websocket library, it seems
-		very difficult or impossible with d-bus.
+		QDBusConnection.systemBus().registerObject('/com/krontech/chronos/control_mock_hack', self) #The .connect call freezes if we don't do this, or if we do this twice.
 		
-		Note: It is helpful to have events propagate back to the python UI
-		however. It means we can ignore updating other elements when changing
-		one element, since - as either element could be updated at any time
-		from (say) a web ui, it doesn't really matter where the update originates
-		from. All that matters is that it does update.
-	"""
+		self._callbacks = {}
+		
+		for key in _camState.keys():
+			QDBusConnection.systemBus().connect('com.krontech.chronos.control_mock', '/com/krontech/chronos/control_mock', '',
+				key, self.__newKeyValue)
+			self._callbacks[key] = []
+	
+	def observe(self, key, callback):
+		"""Add a function to get called when a value is updated."""
+		self._callbacks[key] += [callback]
+	
+	def unobserve(self, key, callback):
+		"""Stop a function from getting called when a value is updated."""
+		raise Exception('unimplimented')
+	
+	@pyqtSlot('QDBusMessage')
+	def __newKeyValue(self, msg):
+		"""Update _camState and invoke any  registered observers."""
+		_camState[msg.member()] = msg.arguments()[0]
+		for callback in self._callbacks[msg.member()]:
+			callback(msg.arguments()[0])
+	
+	def get(self, key):
+		return _camState[key]
+
+apiValues = APIValues()
 
 
 def observe(name: str, callback: Callable[[Any], None], saftyCheckForSilencedWidgets=True) -> None:
-	"""Observe changes in a state value.
-	
-		Args:
-			name: ID of the state variable. "exposure", "focusPeakingColor", etc.
-			callback: Function called when the state updates and upon subscription.
-				Called with one parameter, the new value. Called when registered
-				and when the value updates.
-			isNonUpdatingCallback=False: Indicates no API requests will be made from
-				this function. This is usually false, because most callbacks *do*
-				cause updates to the API, and it's really hard to detect this. A
-				silenced callback does not update anything, since it should silence
-				all the affected fields via the @silenceCallbacks(…) decorator.
-		
-		Note: Some frequently updated values (> 10/sec) are only available via
-			polling due to flooding concerns. They can not be observed, as they're
-			assumed to *always* be changed. See the API docs for more details.
-		
-		
-		Rationale:
-		It is convenient and less error-prone if we only have one callback that
-		handles the initialization and update of values. The API provides separate
-		initialization and update methods, so we'll store the initialization and
-		use it to perform the initial call to the observe() callback.
-		
-		In addition, this means we only have to query the initial state once,
-		retrieving a blob of all the data available, rather than retrieving each
-		key one syscall at a time as we instantiate each Qt control.
-	"""
-	
-	callback(_camState[name])
-	QDBusConnection.systemBus().connect('com.krontech.chronos.control.mock', '/com/krontech/chronos/control/mock', '',
-		name, callback)
+	callback(apiValues.get(name))
+	apiValues.observe(name, callback)
 
 
 def observe_future_only(name: str, callback: Callable[[Any], None], saftyCheckForSilencedWidgets=True) -> None:
-	"""Like `observe`, but without the initial callback when observing.
-	
-		Useful when `observe`ing a derived value, which observe can't deal with yet.
-	"""
-	
-	QDBusConnection.systemBus().connect('com.krontech.chronos.control.mock', '/com/krontech/chronos/control/mock', '',
-		name, callback)
+	apiValues.observe(name, callback)
 
-
-
-def silenceCallbacks(*elements):
-	"""Silence events for the duration of a callback.
-	
-		This allows an API element to be updated without triggering the API again.
-		If the API was triggered, it might update the element which would cause an
-		infinite loop.
-	"""
-	
-	def silenceCallbacksOf(callback):
-		def silencedCallback(self, *args, **kwargs):
-			for element in elements:
-				getattr(self, element).blockSignals(True)
-			
-			callback(self, *args, **kwargs)
-			
-			for element in elements:
-				getattr(self, element).blockSignals(False)
-		
-		silencedCallback._isSilencedCallback = True #Checked by the API, which only takes silenced callbacks to avoid loops.
-		return silencedCallback
-	return silenceCallbacksOf
-
-
-
-# Only export the functions we will use. Keep it simple. (This can be complicated later as the need arises.)
-__all__ = ['control', 'video', 'observe'] #This doesn't work. Why?
 
 
 #Launch the API if not imported as a library.
