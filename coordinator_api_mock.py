@@ -81,7 +81,7 @@ def stringifyTypeClasses(typeClass: Any) -> str:
 		return typeClass._name or 'Union' #Seems to be Unions mess it up, but I don't know how to break them.
 	
 	if hasattr(typeClass, '__class__'):
-		return typeClass.__class__
+		return str(typeClass.__class__)
 	
 	raise Exception(f'Unknown typeClass {typeClass}')
 

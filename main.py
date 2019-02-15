@@ -443,8 +443,6 @@ for key in available_keys:
 
 
 if __name__ == '__main__':
-	sys.exit(app.exec_())
-	
 	#Start a new thread to launch the wsgi server from.
 	#Adapted from https://www.pymadethis.com/article/multithreading-pyqt-applications-with-qthreadpool/
 	
