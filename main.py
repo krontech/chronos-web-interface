@@ -54,7 +54,6 @@ from hmac import compare_digest
 from functools import wraps
 import re
 
-from PyQt5 import QtWidgets
 from PyQt5.QtCore import pyqtSlot, QObject, QRunnable, QThreadPool
 
 from debugger import *; dbg
@@ -62,7 +61,7 @@ import api_mock as api
 
 sio = socketio.Server()
 app = Flask('chronos-web-interface')
-qtApp = QtWidgets.QApplication(sys.argv)
+qtApp = QtCore.QCoreApplication(sys.argv)
 
 
 
@@ -427,8 +426,8 @@ class MessageWrapper(QObject):
 		
 	@pyqtSlot('QDBusMessage')
 	def emitSocketEvent(self, msg):
-		print('emitting', self.key, msg.arguments()[0])
-		sio.emit(self.key, msg.arguments()[0], room=self.key)
+		print('emitting', self.key, msg)
+		sio.emit(self.key, msg, room=self.key)
 	
 __wrappers = [] #Keep a reference to the wrapper objects. Without it, the callbacks stop getting called.
 for key in available_keys:
@@ -448,7 +447,7 @@ if __name__ == '__main__':
 	
 	#Horrible hack, just poll for dbus events 60 times a second. Threading doesn't work. 🤷
 	def checkForDBusEvents():
-		QtWidgets.QApplication.processEvents()
+		QtCore.QCoreApplication.processEvents()
 		eventlet.spawn_after(0.016, checkForDBusEvents)
 	eventlet.spawn_after(0.016, checkForDBusEvents)
 	

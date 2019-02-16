@@ -25,9 +25,6 @@ from PyQt5.QtCore import pyqtSlot, QObject
 from PyQt5.QtDBus import QDBusConnection, QDBusInterface, QDBusReply
 from typing import Callable, Any
 
-import coordinator_api_mock #importing starts the service
-import video_api_mock
-
 # Set up d-bus interface. Connect to mock system buses. Check everything's working.
 if not QDBusConnection.systemBus().isConnected():
 	print("Error: Can not connect to D-Bus. Is D-Bus itself running?", file=sys.stderr)
@@ -44,8 +41,8 @@ cameraVideoAPI = QDBusInterface(
 	'', #Interface
 	QDBusConnection.systemBus() )
 
-cameraControlAPI.setTimeout(16) #Default is -1, which means 25000ms. 25 seconds is too long to go without some sort of feedback, and the only real long-running operation we have - saving - can take upwards of 5 minutes. Instead of setting the timeout to half an hour, we should probably use events which are emitted as the event progresses. One frame (at 60fps) should be plenty of time for the API to respond, and also quick enough that we'll notice any slowness. The mock replies to messages in under 1ms, so I'm not too worried here.
-cameraVideoAPI.setTimeout(16)
+cameraControlAPI.setTimeout(32) #Default is -1, which means 25000ms. 25 seconds is too long to go without some sort of feedback, and the only real long-running operation we have - saving - can take upwards of 5 minutes. Instead of setting the timeout to half an hour, we should probably use events which are emitted as the event progresses. One frame (at 60fps) should be plenty of time for the API to respond, and also quick enough that we'll notice any slowness. The mock replies to messages in under 1ms, so I'm not too worried here.
+cameraVideoAPI.setTimeout(32) #16ms is too low.
 
 if not cameraControlAPI.isValid():
 	print("Error: Can not connect to Mock Camera Control D-Bus API at %s. (%s: %s)" % (
