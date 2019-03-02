@@ -57,7 +57,7 @@ import re
 from PyQt5.QtCore import pyqtSlot, QObject, QRunnable, QThreadPool
 
 from debugger import *; dbg
-import api_mock as api
+import api
 
 sio = socketio.Server()
 app = Flask('chronos-web-interface')
@@ -114,7 +114,7 @@ class NetworkPassword(QObject):
 		
 	@pyqtSlot(str)
 	def networkPasswordChanged(self, password:str) -> None:
-		print('network password updated to', password, sha256(bytes(password, 'utf-8')).digest())
+		# print('network password updated to', password, sha256(bytes(password, 'utf-8')).digest())
 		self.hashedPassword = sha256(bytes(password, 'utf-8')).digest()
 	
 	def equals(self, passwordHashHexString: str) -> bool:
@@ -451,8 +451,11 @@ if __name__ == '__main__':
 		eventlet.spawn_after(0.016, checkForDBusEvents)
 	eventlet.spawn_after(0.016, checkForDBusEvents)
 	
-	ioApp = socketio.Middleware(sio, app)
-	eventlet.wsgi.server(eventlet.listen(('', api.get('HTTPPort'))), ioApp)
+	#Starting the server prints "sys:1: ReusePortUnavailableWarning: socket.SO_REUSEPORT is defined but not supported". This was fixed upstream in 2017, but for now it seems there's little we can do about it.
+	eventlet.wsgi.server(
+		eventlet.listen(('', api.get('HTTPPort'))),
+		socketio.Middleware(sio, app),
+	)
 	
 	#Safety return. Prevents weird issues if eventlet.wsgi.server ever actually does return.
 	raise Exception('eventlet unepectedly returned')

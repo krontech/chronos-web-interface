@@ -1,29 +1,19 @@
 # -*- coding: future_fstrings -*-
 
-"""Mock for api.py. Allows easier development & testing of the QT interface.
-
-	This mock is less "complete" than the C-based mock, as this mock only returns
-	values sensible enough to develop the UI with. Currently the C-based mock is
-	used for the camera API, and this mock is used for the control api. Note that
-	this mock is still available for external programs to use via the dbus
-	interface.
-
-	Usage:
-	import api as api
-	print(api.control('get_video_settings'))
-
-	Remarks:
-	The service provider component can be extracted if interaction with the HTTP
-	api is desired. While there is a more complete C-based mock, in chronos-cli, it
-	is exceptionally hard to add new calls to.
-"""
+"""Interface for the control api d-bus service."""
 
 import sys
 from debugger import *; dbg
 
+from os import environ
+
 from PyQt5.QtCore import pyqtSlot, QObject
 from PyQt5.QtDBus import QDBusConnection, QDBusInterface, QDBusReply
 from typing import Callable, Any
+
+
+USE_MOCK = environ.get('USE_CHRONOS_API_MOCK') in ('always', 'web')
+
 
 # Set up d-bus interface. Connect to mock system buses. Check everything's working.
 if not QDBusConnection.systemBus().isConnected():
@@ -31,28 +21,28 @@ if not QDBusConnection.systemBus().isConnected():
 	raise Exception("D-Bus Setup Error")
 
 cameraControlAPI = QDBusInterface(
-	'com.krontech.chronos.control', #Service
-	'/com/krontech/chronos/control', #Path
-	'', #Interface
+	f"com.krontech.chronos.{'control_mock' if USE_MOCK else 'control'}", #Service
+	f"/com/krontech/chronos/{'control_mock' if USE_MOCK else 'control'}", #Path
+	f"", #Interface
 	QDBusConnection.systemBus() )
 cameraVideoAPI = QDBusInterface(
-	'com.krontech.chronos.video_mock', #Service
-	'/com/krontech/chronos/video_mock', #Path
-	'', #Interface
+	f"com.krontech.chronos.{'video_mock' if USE_MOCK else 'video'}", #Service
+	f"/com/krontech/chronos/{'video_mock' if USE_MOCK else 'video'}", #Path
+	f"", #Interface
 	QDBusConnection.systemBus() )
 
-cameraControlAPI.setTimeout(32) #Default is -1, which means 25000ms. 25 seconds is too long to go without some sort of feedback, and the only real long-running operation we have - saving - can take upwards of 5 minutes. Instead of setting the timeout to half an hour, we should probably use events which are emitted as the event progresses. One frame (at 60fps) should be plenty of time for the API to respond, and also quick enough that we'll notice any slowness. The mock replies to messages in under 1ms, so I'm not too worried here.
-cameraVideoAPI.setTimeout(32) #16ms is too low.
+cameraControlAPI.setTimeout(32) #Default is -1, which means 25000ms. 25 seconds is too long to go without some sort of feedback, and the only real long-running operation we have - saving - can take upwards of 5 minutes. Instead of setting the timeout to half an hour, we should probably use events which are emitted as the event progresses. One frame (at 60fps) should be plenty of time for the API to respond, and also quick enough that we'll notice any slowness. The mock *generally* replies to messages in under 1ms, so I'm not too worried here.
+cameraVideoAPI.setTimeout(32)
 
 if not cameraControlAPI.isValid():
-	print("Error: Can not connect to Mock Camera Control D-Bus API at %s. (%s: %s)" % (
+	print("Error: Can not connect to control D-Bus API at %s. (%s: %s)" % (
 		cameraControlAPI.service(), 
 		cameraControlAPI.lastError().name(), 
 		cameraControlAPI.lastError().message(),
 	), file=sys.stderr)
 	raise Exception("D-Bus Setup Error")
 if not cameraVideoAPI.isValid():
-	print("Error: Can not connect to Mock Camera Video D-Bus API at %s. (%s: %s)" % (
+	print("Error: Can not connect to video D-Bus API at %s. (%s: %s)" % (
 		cameraVideoAPI.service(), 
 		cameraVideoAPI.lastError().name(), 
 		cameraVideoAPI.lastError().message(),
@@ -65,6 +55,22 @@ class DBusException(Exception):
 	"""Raised when something goes wrong with dbus. Message comes from dbus' msg.error().message()."""
 	pass
 
+class APIException(Exception):
+	"""Raised when something goes wrong with dbus. Message comes from dbus' msg.error().message()."""
+	pass
+
+class ControlReply():
+	def __init__(self, value=None, errorName=None, message=None):
+		self.value = value
+		self.message = message
+		self.errorName = errorName
+	
+	def unwrap(self):
+		if self.errorName:
+			raise APIException(self.errorName + ': ' + self.message)
+		else:
+			return self.value
+
 
 def video(*args, **kwargs):
 	"""Call the camera video DBus API. First arg is the function name.
@@ -73,9 +79,11 @@ def video(*args, **kwargs):
 		See https://github.com/krontech/chronos-cli/tree/master/src/api for implementation details about the API being called.
 		See README.md at https://github.com/krontech/chronos-cli/tree/master/src/daemon for API documentation.
 	"""
+	
 	msg = QDBusReply(cameraVideoAPI.call(*args, **kwargs))
 	if not msg.isValid():
 		raise DBusException("%s: %s" % (msg.error().name(), msg.error().message()))
+	
 	return msg.value()
 
 
@@ -87,14 +95,19 @@ def control(*args, **kwargs):
 		See README.md at https://github.com/krontech/chronos-cli/tree/master/src/daemon for API documentation.
 	"""
 	
+	#Unwrap D-Bus errors from message.
 	msg = QDBusReply(cameraControlAPI.call(*args, **kwargs))
 	if not msg.isValid():
 		raise DBusException("%s: %s" % (msg.error().name(), msg.error().message()))
-	return msg.value()
+	
+	#Unwrap API errors from message.
+	return ControlReply(**msg.value() or {}).unwrap()
 
 
 def get(keyOrKeys):
 	"""Call the camera control DBus get method.
+	
+		Convenience method for `control('get', [value])[0]`.
 		
 		Accepts key or [key, …], where keys are strings.
 		
@@ -103,21 +116,14 @@ def get(keyOrKeys):
 		See control's `available_keys` for a list of valid inputs.
 	"""
 	
-	keyList = [keyOrKeys] if isinstance(keyOrKeys, str) else keyOrKeys
-	
-	msg = QDBusReply(cameraControlAPI.call('get', keyList))
-	if not msg.isValid():
-		raise DBusException("%s: %s" % (msg.error().name(), msg.error().message()))
-	return msg.value()[keyOrKeys] if isinstance(keyOrKeys, str) else msg.value()
+	valueList = control('get', 
+		[keyOrKeys] if isinstance(keyOrKeys, str) else keyOrKeys )
+	return valueList[keyOrKeys] if isinstance(keyOrKeys, str) else valueList
 
 
 def set(values):
 	"""Call the camera control DBus set method. Accepts {str: value}."""
-	
-	msg = QDBusReply(cameraControlAPI.call('set', values))
-	if not msg.isValid():
-		raise DBusException("%s: %s" % (msg.error().name(), msg.error().message()))
-	return msg.value()
+	control('set', values)
 
 
 
@@ -134,13 +140,22 @@ class APIValues(QObject):
 	def __init__(self):
 		super(APIValues, self).__init__()
 		
-		QDBusConnection.systemBus().registerObject('/com/krontech/chronos/control_hack', self) #The .connect call freezes if we don't do this, or if we do this twice.
+		#The .connect call freezes if we don't do this, or if we do this twice.
+		QDBusConnection.systemBus().registerObject(
+			f"/com/krontech/chronos/{'control_mock_hack' if USE_MOCK else 'control_hack'}", 
+			self,
+		)
 		
 		self._callbacks = {}
 		
 		for key in _camState.keys():
-			QDBusConnection.systemBus().connect('com.krontech.chronos.control', '/com/krontech/chronos/control', '',
-				key, self.__newKeyValue)
+			QDBusConnection.systemBus().connect(
+				f"com.krontech.chronos.{'control_mock' if USE_MOCK else 'control'}", 
+				f"/com/krontech/chronos/{'control_mock_hack' if USE_MOCK else 'control_hack'}",
+				f"",
+				key, 
+				self.__newKeyValue,
+			)
 			self._callbacks[key] = []
 	
 	def observe(self, key, callback):
