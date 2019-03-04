@@ -1,3 +1,5 @@
+# -*- coding: future_fstrings -*-
+
 """Simple, short debugging methods.
 
 Both the provided dbg() and brk() calls are the same, calling up an interactive
@@ -8,7 +10,8 @@ Example:
 	dbg()
 """
 
-import sys, pdb
+import sys
+import pdb
 from PyQt5 import QtCore
 
 
@@ -18,6 +21,7 @@ sys.excepthook = lambda t, v, tb: (
 	pdb.traceback.print_exception(t, v, tb),
 	pdb.post_mortem(t=tb)
 )
+
 
 def brk():
 	"""Start an interactive debugger at the callsite."""
@@ -33,7 +37,35 @@ if hasattr(pdb, 'hideframe'):
 
 dbg = brk #I keep using one or the other. Either should probably work, let's make debugging easy on ourselves.
 
-def dump(val, label=None):
-	"""Print and return the value. Useful for inline print-debugging."""
-	print(label, val) if label else print(val)
-	return val
+
+def dump(*args):
+	"""Print and return the value. Useful for inline print-debugging.
+		
+		1-arity: dump(val: any)
+			print val and return it.
+		2-arity: dump(label, val)"""
+	if not args:
+		raise ValueError('No args specified to dump!')
+	print(*args)
+	return args[0] if len(args) == 1 else args[1]
+	
+
+def breakIf(widget):
+	"""If a keyboard modifier is held, start an interactive debugger.
+		
+		Args:
+			widget: A Qt Widget, in a GUI2 screen which has app set
+				to the global application variable. The application
+				variable gets the keyboard modifier state.
+	
+		Useful for debugging input-driven events going off the rails
+			half-way through. Note that due to the call to
+			pyqtRemoveInputHook in brk(), this is only a trigger-on
+			deal. You can't stop triggering it.
+		"""
+	
+	if int(widget.parent().app.keyboardModifiers()) != QtCore.Qt.NoModifier: #33554432: #heck if I know
+		brk()
+
+if hasattr(pdb, 'hideframe'):
+	breakIf = pdb.hideframe(breakIf)

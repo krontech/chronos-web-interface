@@ -151,7 +151,7 @@ class APIValues(QObject):
 		for key in _camState.keys():
 			QDBusConnection.systemBus().connect(
 				f"com.krontech.chronos.{'control_mock' if USE_MOCK else 'control'}", 
-				f"/com/krontech/chronos/{'control_mock_hack' if USE_MOCK else 'control_hack'}",
+				f"/com/krontech/chronos/{'control_mock' if USE_MOCK else 'control'}",
 				f"",
 				key, 
 				self.__newKeyValue,
