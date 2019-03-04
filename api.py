@@ -179,17 +179,17 @@ class APIValues(QObject):
 apiValues = APIValues()
 
 
-def observe(name: str, callback: Callable[[Any], None], saftyCheckForSilencedWidgets=True) -> None:
+def observe(name: str, callback: Callable[[Any], None]) -> None:
 	callback(apiValues.get(name))
 	apiValues.observe(name, callback)
 
 
-def observe_future_only(name: str, callback: Callable[[Any], None], saftyCheckForSilencedWidgets=True) -> None:
+def observe_future_only(name: str, callback: Callable[[Any], None]) -> None:
 	apiValues.observe(name, callback)
 
 
 
-#Launch the API if not imported as a library.
+#Test this component if launched on it's own.
 if __name__ == '__main__':
 	from PyQt5.QtCore import QCoreApplication
 	import signal
@@ -201,6 +201,6 @@ if __name__ == '__main__':
 	
 	print("Self-test: Retrieve battery charge.")
 	print(f"Battery charge: {get('batteryCharge')}")
-	print("Self-test passed. Python API is up and running!")
+	print("Control API self-test passed.")
 	
-	sys.exit(app.exec_())
+	sys.exit(0)
