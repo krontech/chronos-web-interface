@@ -40,6 +40,15 @@ Examples:
 		})
 		.then(resp => resp.json())
 		.then(error => console.info('set error', error)) //> set error null
+		
+		- or -
+		
+		(await fetch('/api/0.1.0/takeStillReferenceForMotionTriggering', {
+				method:'post', 
+				body:'[]', 
+				headers: new Headers({'content-type': 'application/json'}),
+			})
+		).json()
 	Web URL:
 		http://192.168.1.135/api/0.1.0/get?[%22totalAvailableFrames%22,%20%22totalRecordedFrames%22,%20%22playbackFrame%22]
 """
@@ -89,6 +98,8 @@ available_keys = api.control('available_keys')
 
 
 def parseJson(string, fallback=None) -> any:
+	"""Parse json, optionally falling back to a value."""
+	
 	try:
 		return json.loads(string)
 	except ValueError as err:
@@ -97,6 +108,17 @@ def parseJson(string, fallback=None) -> any:
 			return fallback
 		else:
 			raise err
+
+
+def httpError(code:int, message:any):
+	"""Generate a flask json error reply. Message can be a str or Exception."""
+	
+	if not code or not message:
+		raise ValueError('jsonError(…) requires a http error code and an explanatory message.')
+	
+	err = jsonify({'message': str(message)})
+	err.status_code = code
+	return err
 
 
 class NetworkPassword(QObject):
@@ -254,22 +276,32 @@ def registerRoute(call: str):
 		#Then, load the post body, if any. This is concatenated to the parameters in the query string. The alternative would be to have the body replace the query string parameters, but this seems less confusing.
 		if request.method == 'POST':
 			if not request.is_json:
-				raise ValueError('Only JSON-encoded POST requests are supported.')
+				return httpError(415, 'Only JSON-encoded POST requests are supported.')
 			
 			postedArgs = request.get_json()
 			if type(postedArgs) is not list:
-				raise ValueError('Request body must be a JSON list, the list of args to call the function with.')
+				return httpError(400, 'Request body must be a JSON list, the list of args to call the function with.')
 			dbusCallArgs += postedArgs
 		
 		#Finally, actually perform the D-Bus call specified in the url path with the arguments compiled from the query string and the post body.
 		#print('httpCall', call['name'], *dbusCallArgs, '→', api.control(call['name'], *dbusCallArgs))
-		return jsonify(api.control(call['name'], *dbusCallArgs))
+		try:
+			return jsonify(api.control(call['name'], *dbusCallArgs))
+		except api.APIException as e:
+			return httpError(500, e)
 	
 	@sio.on(call['name'])
 	@wsLoginRequired
 	def wsCall(sid, data):
 		print('socketCall', call['name'], data)
-		return api.control(call['name'], data)
+		
+		try:
+			return api.control(call['name'], data)
+		except api.APIException as e:
+			sio.emit(f"{call['name']}Error", {
+				'message': str(e),
+				'parameters': data, #Provide a little extra data, since ws is async we may need to track down the call that produced the error. We don't have the data available locally to the async error.
+			}, room=sid)
 
 
 reimplementedFunctions = {'get', 'set'} #Some functions, such as get and set, are not straight passthrough to the internal D-Bus API. (Get and Set have filtering requirements, because we don't want to let people reconfigure HTTP over HTTP and lock themselves out.)
@@ -296,19 +328,22 @@ def httpApiGetProxy():
 	
 	#Get takes one arg - a list of keys to retrieve.
 	if len(dbusCallArgs) == 0:
-		raise ValueError('No keys provided to retrieve values for.')
+		return httpError(400, 'No keys provided to retrieve values for.')
 	if len(dbusCallArgs) > 1:
-		raise ValueError(f'Get passed too many args, got {len(args)} when only 1 (a list of keys to get the values of) was expected.')
+		return httpError(400, f'Get passed too many args, got {len(args)} when only 1 (a list of keys to get the values of) was expected.')
 	if type(dbusCallArgs[0]) is not list:
-		raise ValueError(f'Set takes a list of strings, keys, as its first arg. It was passed a {type(dbusCallArgs[0]).__name__} instead.')
+		return httpError(400, f'Set takes a list of strings, keys, as its first arg. It was passed a {type(dbusCallArgs[0]).__name__} instead.')
 	
 	try:
 		blacklistedKey = next(key for key in dbusCallArgs[0] if key in apiValueBlacklist)
-		return {"ERROR": f"The key {blacklistedKey} is not available through the Chronos web API. (Generally, the web interface connot configure itself for security and safety.) Sorry about that!"}
+		return httpError(400, f"The key {blacklistedKey} is not available through the Chronos web API. (Generally, the web interface connot configure itself for security and safety.) Sorry about that!")
 	except StopIteration:
 		pass #No blacklisted keys found. 🙂
 	
-	return jsonify(api.control('get', *dbusCallArgs))
+	try:
+		return jsonify(api.control('get', *dbusCallArgs))
+	except api.APIException as e:
+		return httpError(500, e)
 
 @sio.on('get')
 @wsLoginRequired
@@ -317,15 +352,26 @@ def wsApiGetProxy(sid, data):
 	print('socketCall!', 'get', data)
 	
 	if type(data) is not list:
-		raise ValueError(f'Set takes a list of strings, keys, as its first arg. It was passed a {type(data).__name__} instead.')
+		return httpError(400, f'Set takes a list of strings, keys, as its first arg. It was passed a {type(data).__name__} instead.')
 	
 	try:
 		blacklistedKey = next(key for key in data if key in apiValueBlacklist)
-		return {"ERROR": f"The key {blacklistedKey} is not available through the Chronos web API. (Generally, the web interface connot configure itself for security and safety.) Sorry about that!"}
+		sio.emit('getError', {
+			'message': f"The key {blacklistedKey} is not available through the Chronos web API. (Generally, the web interface connot configure itself for security and safety.) Sorry about that!",
+			'parameters': data,
+		}, room=sid)
+		return
 	except StopIteration:
 		pass #No blacklisted keys found. 🙂
 	
-	return api.control('get', data)
+	try:
+		return api.control('get', data)
+	except api.APIException as e:
+		sio.emit('getError', {
+			'message': str(e),
+			'parameters': data,
+		}, room=sid)
+		return
 
 
 @app.route("/api/0.1.0/set", endpoint='set', methods=['POST']) #get API values, a bit of a special case since we have a layer of access control on this one.
@@ -338,19 +384,19 @@ def httpApiSetProxy():
 	]
 	
 	if not request.is_json:
-		raise ValueError('Only JSON-encoded POST requests are supported.')
+		return httpError(415, 'Only JSON-encoded POST requests are supported.')
 	postedArgs = request.get_json()
 	if type(postedArgs) is not list:
-		raise ValueError('Request body must be a JSON list, the list of args to call the function with.')
+		return httpError(400, 'Request body must be a JSON list, the list of args to call the function with.')
 	dbusCallArgs += postedArgs
 	
 	#Set takes one arg - a map of key:value pairs to set.
 	if len(dbusCallArgs) == 0:
-		raise ValueError('No keys provided to retrieve values for.')
+		return httpError(400, 'No keys provided to retrieve values for.')
 	if len(dbusCallArgs) > 1:
-		raise ValueError(f'Get passed too many args, got {len(args)} when only 1 (a list of keys to get the values of) was expected.')
+		return httpError(400, f'Get passed too many args, got {len(args)} when only 1 (a list of keys to get the values of) was expected.')
 	if type(dbusCallArgs[0]) is not dict:
-		raise ValueError(f'Set takes {{"key": value}} pairs as its first arg. It was passed a {type(dbusCallArgs[0]).__name__} instead.')
+		return httpError(400, f'Set takes {{"key": value}} pairs as its first arg. It was passed a {type(dbusCallArgs[0]).__name__} instead.')
 	
 	try:
 		blacklistedKey = next(key for key in dbusCallArgs[0].keys() if key in apiValueBlacklist)
@@ -358,7 +404,15 @@ def httpApiSetProxy():
 	except StopIteration:
 		pass #No blacklisted keys found. 🙂
 	
-	return jsonify(api.control('set', *dbusCallArgs))
+	try:
+		return jsonify(api.control('set', *dbusCallArgs))
+	except api.APIException as e:
+		err = jsonify({
+			'message': str(e),
+			'parameters': data,
+		})
+		err.status_code = 500
+		return err
 
 @sio.on('set')
 @wsLoginRequired
@@ -371,12 +425,21 @@ def wsApiSetProxy(sid, data):
 	
 	try:
 		blacklistedKey = next(key for key in data.keys() if key in apiValueBlacklist)
-		return {"ERROR": f"The key {blacklistedKey} is not available through the Chronos web API. (Generally, the web interface connot configure itself for security and safety.) Sorry about that!"}
+		sio.emit('setError', {
+			'message': f"The key {blacklistedKey} is not available through the Chronos web API. (Generally, the web interface connot configure itself for security and safety.) Sorry about that!",
+			'parameters': data,
+		}, room=sid)
+		return
 	except StopIteration:
 		pass #No blacklisted keys found. 🙂
 	
-	return api.control('set', data)
-
+	try:
+		return api.control('set', data)
+	except api.APIException as e:
+		sio.emit('setError', {
+			'message': str(e),
+			'parameters': data,
+		}, room=sid)
 
 
 @sio.on('subscribe')
@@ -405,7 +468,11 @@ def subscribeToValueUpdates(sid, keys):
 			})"""
 	try:
 		unknownKey = next(key for key in keys if key not in available_keys or key in apiValueBlacklist)
-		return {"ERROR": f"Unknown value, {unknownKey}, to subscribe to. Known values are: {keys(available_calls)}"}
+		sio.emit('subscribeToValueUpdatesError', {
+			'message': f"Unknown value, {unknownKey}, to subscribe to. Known values are: {keys(available_calls)}",
+			'parameters': keys,
+		}, room=sid)
+		return
 	except StopIteration:
 		pass #No unknown keys found.
 	
