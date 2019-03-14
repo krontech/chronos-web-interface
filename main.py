@@ -93,9 +93,8 @@ apiFunctionBlacklist = { #Don't expose these functions via HTTP, for security an
 
 #Adapted from https://pypi.org/project/python-socketio/
 
-available_calls = api.control('available_calls')
-available_keys = api.control('available_keys')
-
+availableCalls = api.control('availableCalls')
+availableKeys = api.control('availableKeys')
 
 def parseJson(string, fallback=None) -> any:
 	"""Parse json, optionally falling back to a value."""
@@ -305,7 +304,7 @@ def registerRoute(call: str):
 
 
 reimplementedFunctions = {'get', 'set'} #Some functions, such as get and set, are not straight passthrough to the internal D-Bus API. (Get and Set have filtering requirements, because we don't want to let people reconfigure HTTP over HTTP and lock themselves out.)
-for call in available_calls:
+for call in availableCalls:
 	if call['name'] not in apiFunctionBlacklist and call['name'] not in reimplementedFunctions:
 		registerRoute(call) #Call must be passed as a function arg, all the routes use final value of call otherwise. I think the function provides a new context for the functions inside it, where this loop does not.
 
@@ -467,9 +466,9 @@ def subscribeToValueUpdates(sid, keys):
 				console.log('playback frame is', playbackFrame)
 			})"""
 	try:
-		unknownKey = next(key for key in keys if key not in available_keys or key in apiValueBlacklist)
+		unknownKey = next(key for key in keys if key not in availableKeys or key in apiValueBlacklist)
 		sio.emit('subscribeToValueUpdatesError', {
-			'message': f"Unknown value, {unknownKey}, to subscribe to. Known values are: {keys(available_calls)}",
+			'message': f"Unknown value, {unknownKey}, to subscribe to. Known values are: {keys(availableCalls)}",
 			'parameters': keys,
 		}, room=sid)
 		return
@@ -497,7 +496,7 @@ class MessageWrapper(QObject):
 		sio.emit(self.key, msg, room=self.key)
 	
 __wrappers = [] #Keep a reference to the wrapper objects. Without it, the callbacks stop getting called.
-for key in available_keys:
+for key in availableKeys:
 	if key not in apiValueBlacklist:
 		__wrappers += [MessageWrapper(key)]
 
