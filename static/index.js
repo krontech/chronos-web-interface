@@ -1,7 +1,7 @@
 "use strict"
 
 document.querySelector('#password').addEventListener('change', evt => {
-	console.log('changing', evt.target.value, sha256(evt.target.value))
+	console.log('changing', evt.target.value, sha256('chronos-' + evt.target.value))
 	
 	const passwordHash = sha256(evt.target.value)
 	

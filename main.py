@@ -137,11 +137,12 @@ class NetworkPassword(QObject):
 	@pyqtSlot(str)
 	def networkPasswordChanged(self) -> None:
 		try:
-			with open('/opt/camera/.network-password.hash', mode='rb') as file:
-				self.hashedPassword = file.readline()
+			with open('/opt/camera/.network-password.hash', mode='r') as file:
+				self.hashedPassword = bytes.fromhex(file.readline().strip())
 			print('network password updated to', self.hashedPassword)
 		except Exception as e:
 			print('Could not update password:', e)
+			self.hashedPassword = bytes()
 	
 	def equals(self, passwordHashHexString: str) -> bool:
 		"""Compare the provided password against the camera's password.
@@ -157,9 +158,14 @@ class NetworkPassword(QObject):
 			print('authentication can not succeed without a set password')
 			return False
 		
+		
+		#password is composed of sha256(camera serial, sha256('chronos-' + password)
+		#import codecs
+		#print('password hash', codecs.encode(sha256(self.serial + bytes.fromhex(passwordHashHexString)).digest(), 'hex'))
+		
 		return compare_digest(
 			self.hashedPassword,
-			bytes.fromhex(passwordHashHexString)
+			sha256(self.serial + bytes.fromhex(passwordHashHexString)).digest()
 		)
 
 networkPassword = NetworkPassword()
@@ -217,7 +223,7 @@ def index():
 		Route / as /app/main, to make it less fiddly to type in the
 		app URL."""
 	
-	print('api TAF:', api.get(['totalAvailableFrames']))
+	print('api TAF:', api.get('cameraMaxFrames'))
 	return render_template('index.html')
 
 

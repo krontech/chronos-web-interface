@@ -3,41 +3,35 @@
 const socket = io();
 
 socket.on('connect', () => {
-	socket.emit('subscribe', ['playbackFrame'], reply =>
+	socket.emit('subscribe', ['cameraDescription'], reply =>
 		console.info('subscription reply', reply) )
 })
 
-socket.emit('get', ['totalAvailableFrames'], reply => {
-	if(!reply) { return console.error('get totalAvailableFrames failed') }
-	document.querySelector('#totalAvailableFrames').textContent =
-		reply.totalAvailableFrames
-})
-
-socket.emit('get', ['playbackFrame'], reply => {
-	if(!reply) { return console.error('get playbackFrame failed') }
-	document.querySelector('#initialPlaybackFrame').textContent = reply.playbackFrame
+socket.emit('get', ['cameraDescription'], reply => {
+	if(!reply) { return console.error('get cameraDescription failed') }
+	document.querySelector('#initialCameraDescription').textContent = reply.cameraDescription
 })
 
 
-socket.on('playbackFrame', playbackFrame => {
-	document.querySelector('#currentPlaybackFrame').textContent = playbackFrame
+socket.on('cameraDescription', cameraDescription => {
+	document.querySelector('#currentCameraDescription').textContent = cameraDescription
 })
 
 socket.on('message', data => console.log('message', data))
 
 
-document.querySelector('#setPlaybackFrameHTTP').addEventListener('click', () => {
+document.querySelector('#setCameraDescriptionHTTP').addEventListener('click', () => {
 	fetch('/api/0.1.0/set', {
 		method: "POST",
 		cache: "no-cache",
 		credentials: "same-origin",
 		headers: {"Content-Type": "application/json; charset=utf-8"},
-		body: JSON.stringify([{playbackFrame: 5000}]),
+		body: JSON.stringify([{cameraDescription: 'test 1'}]),
 	})
 	.then(reply => console.info('http reply', reply))
 })
 
-document.querySelector('#setPlaybackFrameWS').addEventListener('click', () =>
-	socket.emit('set', {playbackFrame: 10000}, function(reply) {
+document.querySelector('#setCameraDescriptionWS').addEventListener('click', () =>
+	socket.emit('set', {cameraDescription: 'test 2'}, function(reply) {
 		console.info('ws reply', reply)
 	}) )
