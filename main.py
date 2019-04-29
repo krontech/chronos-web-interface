@@ -1,3 +1,4 @@
+#!/usr/bin/python3
 # -*- coding: future_fstrings -*-
 
 """Web server proxying the chronos internal D-Bus API.
@@ -62,15 +63,21 @@ from hashlib import sha256
 from hmac import compare_digest
 from functools import wraps
 import re
+import signal
+import faulthandler
+import sys
 
 from PyQt5.QtCore import pyqtSlot, QObject, QRunnable, QThreadPool
 
 from debugger import *; dbg
 import api
 
+faulthandler.enable() #Print backtraces in case of crash. (sigsegv & co)
 sio = socketio.Server()
 app = Flask('chronos-web-interface')
 qtApp = QtCore.QCoreApplication(sys.argv)
+
+HTTPPort = 80 #TODO: Load this from env var?
 
 
 
@@ -80,13 +87,6 @@ qtApp = QtCore.QCoreApplication(sys.argv)
 
 
 apiValueBlacklist = { #Don't expose these values via get or set, for security and safety.
-	'networkPassword',
-	'localHTTPAccess',
-	'localSSHAccess',
-	'remoteHTTPAccess',
-	'remoteSSHAccess',
-	'HTTPPort',
-	'SSHPort',
 }
 apiFunctionBlacklist = { #Don't expose these functions via HTTP, for security and safety.
 }
@@ -128,15 +128,20 @@ class NetworkPassword(QObject):
 	
 	def __init__(self):
 		super().__init__()
-		self.hashedPassword = None
-		self.serial = api.get('cameraSerial')
-		api.observe('networkPassword', self.networkPasswordChanged) #Required for QDBusMessage types, since the non-future version emits the value verbatim instead of wrapped.
-		
+		self.serial = bytes(api.get('cameraSerial'), 'utf-8')
+		self.hashedPassword = bytes()
+		self.networkPasswordChanged()
+		signal.signal(signal.SIGHUP,
+			lambda signum, frame: self.networkPasswordChanged() )
 		
 	@pyqtSlot(str)
-	def networkPasswordChanged(self, password:str) -> None:
-		# print('network password updated to', password, sha256(bytes(password, 'utf-8')).digest())
-		self.hashedPassword = sha256(bytes(password, 'utf-8')).digest()
+	def networkPasswordChanged(self) -> None:
+		try:
+			with open('/opt/camera/.network-password.hash', mode='rb') as file:
+				self.hashedPassword = file.readline()
+			print('network password updated to', self.hashedPassword)
+		except Exception as e:
+			print('Could not update password:', e)
 	
 	def equals(self, passwordHashHexString: str) -> bool:
 		"""Compare the provided password against the camera's password.
@@ -148,12 +153,16 @@ class NetworkPassword(QObject):
 		if len(passwordHashHexString) != 64:
 			raise ValueError('password is not a sha256 hex-encoded string')
 		
+		if not self.hashedPassword:
+			print('authentication can not succeed without a set password')
+			return False
+		
 		return compare_digest(
 			self.hashedPassword,
-			bytes.fromhex(passwordHashHexString) )
+			bytes.fromhex(passwordHashHexString)
+		)
 
 networkPassword = NetworkPassword()
-
 
 
 def httpLoginRequired(handler):
@@ -255,15 +264,15 @@ def login():
 	return resp
 
 
-def registerRoute(call: str):
+def registerRoute(call: str, attributes: dict):
 	"""Convert a HTTP call to a URL, or a WS event, into a D-Bus call.
 		
 		Accepts one arg, call, the name of the D-Bus method."""
 	
 	@app.route(
-		f"/api/0.1.0/{call['name']}",
-		endpoint=call['name'],
-		methods={'get':['GET'], 'set':['POST'], 'pure':['GET']}[call['action']] )
+		f"/api/0.1.0/{call}",
+		endpoint=call,
+		methods={'get':['GET'], 'set':['POST'], 'pure':['GET']}[attributes['action']] )
 	@httpLoginRequired
 	def httpCall():
 		#Load the query string as JSON values. (ie, /api/0.1/call?'test'&5 yields ["test", 5] as our function arguments.)
@@ -283,30 +292,30 @@ def registerRoute(call: str):
 			dbusCallArgs += postedArgs
 		
 		#Finally, actually perform the D-Bus call specified in the url path with the arguments compiled from the query string and the post body.
-		#print('httpCall', call['name'], *dbusCallArgs, '→', api.control(call['name'], *dbusCallArgs))
+		#print('httpCall', call, *dbusCallArgs, '→', api.control(call, *dbusCallArgs))
 		try:
-			return jsonify(api.control(call['name'], *dbusCallArgs))
+			return jsonify(api.control(call, *dbusCallArgs))
 		except api.APIException as e:
 			return httpError(500, e)
 	
-	@sio.on(call['name'])
+	@sio.on(call)
 	@wsLoginRequired
 	def wsCall(sid, data):
-		print('socketCall', call['name'], data)
+		print('socketCall', call, data)
 		
 		try:
-			return api.control(call['name'], data)
+			return api.control(call, data)
 		except api.APIException as e:
-			sio.emit(f"{call['name']}Error", {
+			sio.emit(f"{call}Error", {
 				'message': str(e),
 				'parameters': data, #Provide a little extra data, since ws is async we may need to track down the call that produced the error. We don't have the data available locally to the async error.
 			}, room=sid)
 
 
 reimplementedFunctions = {'get', 'set'} #Some functions, such as get and set, are not straight passthrough to the internal D-Bus API. (Get and Set have filtering requirements, because we don't want to let people reconfigure HTTP over HTTP and lock themselves out.)
-for call in availableCalls:
-	if call['name'] not in apiFunctionBlacklist and call['name'] not in reimplementedFunctions:
-		registerRoute(call) #Call must be passed as a function arg, all the routes use final value of call otherwise. I think the function provides a new context for the functions inside it, where this loop does not.
+for call, attributes in availableCalls.items():
+	if call not in apiFunctionBlacklist and call not in reimplementedFunctions:
+		registerRoute(call, attributes) #Call must be passed as a function arg, all the routes use final value of call otherwise. I think the function provides a new context for the functions inside it, where this loop does not.
 
 
 #Get and set D-Bus calls are reimplemented below. They need some
@@ -511,6 +520,9 @@ if __name__ == '__main__':
 	#Start a new thread to launch the wsgi server from.
 	#Adapted from https://www.pymadethis.com/article/multithreading-pyqt-applications-with-qthreadpool/
 	
+	#Quit on ctrl-c.
+	signal.signal(signal.SIGINT, lambda signum, frame: sys.exit(0))
+	
 	#Horrible hack, just poll for dbus events 60 times a second. Threading doesn't work. 🤷
 	def checkForDBusEvents():
 		QtCore.QCoreApplication.processEvents()
@@ -519,7 +531,7 @@ if __name__ == '__main__':
 	
 	#Starting the server prints "sys:1: ReusePortUnavailableWarning: socket.SO_REUSEPORT is defined but not supported". This was fixed upstream in 2017, but for now it seems there's little we can do about it.
 	eventlet.wsgi.server(
-		eventlet.listen(('', api.get('HTTPPort'))),
+		eventlet.listen(('', HTTPPort)),
 		socketio.Middleware(sio, app),
 	)
 	
@@ -536,7 +548,7 @@ if __name__ == '__main__':
 			print('starting HTTP server')
 			# wrap Flask application with engineio's middleware and deploy as an eventlet WSGI server
 			ioApp = socketio.Middleware(sio, app)
-			eventlet.wsgi.server(eventlet.listen(('', api.get('HTTPPort'))), ioApp)
+			eventlet.wsgi.server(eventlet.listen(('', HTTPPort)), ioApp)
 	
 	#Start the non-reentrant http/ws server in a separate thread, so we can
 	#	listen to D-Bus events too.

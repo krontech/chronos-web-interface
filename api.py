@@ -26,13 +26,13 @@ cameraControlAPI = QDBusInterface(
 	f"", #Interface
 	QDBusConnection.systemBus() )
 cameraVideoAPI = QDBusInterface(
-	f"com.krontech.chronos.{'video_mock' if USE_MOCK else 'video_mock'}", #Service
-	f"/com/krontech/chronos/{'video_mock' if USE_MOCK else 'video_mock'}", #Path
+	f"com.krontech.chronos.{'video_mock' if USE_MOCK else 'video'}", #Service
+	f"/com/krontech/chronos/{'video_mock' if USE_MOCK else 'video'}", #Path
 	f"", #Interface
 	QDBusConnection.systemBus() )
 
-cameraControlAPI.setTimeout(32) #Default is -1, which means 25000ms. 25 seconds is too long to go without some sort of feedback, and the only real long-running operation we have - saving - can take upwards of 5 minutes. Instead of setting the timeout to half an hour, we should probably use events which are emitted as the event progresses. One frame (at 60fps) should be plenty of time for the API to respond, and also quick enough that we'll notice any slowness. The mock *generally* replies to messages in under 1ms, so I'm not too worried here.
-cameraVideoAPI.setTimeout(32)
+cameraControlAPI.setTimeout(64) #Default is -1, which means 25000ms. 25 seconds is too long to go without some sort of feedback, and the only real long-running operation we have - saving - can take upwards of 5 minutes. Instead of setting the timeout to half an hour, we should probably use events which are emitted as the event progresses. One frame (at 60fps) should be plenty of time for the API to respond, and also quick enough that we'll notice any slowness. The mock *generally* replies to messages in under 1ms, so I'm not too worried here. The API occasionally times out after 32ms, add more time. Ugh.
+cameraVideoAPI.setTimeout(64)
 
 if not cameraControlAPI.isValid():
 	print("Error: Can not connect to control D-Bus API at %s. (%s: %s)" % (
@@ -101,7 +101,7 @@ def control(*args, **kwargs):
 		raise DBusException("%s: %s" % (msg.error().name(), msg.error().message()))
 	
 	#Unwrap API errors from message.
-	return ControlReply(**msg.value() or {}).unwrap()
+	return msg.value()
 
 
 def get(keyOrKeys):
