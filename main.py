@@ -502,18 +502,17 @@ class MessageWrapper(QObject):
 	
 	def __init__(self, key):
 		super().__init__()
-		self.key = key
-		api.observe_future_only(key, self.emitSocketEvent) #observe_future_only is required for QDBusMessage types, since the non-future version emits the value verbatim instead of wrapped. In addition, because we don't have anything connected to us at this point to recieve events, there is no point firing them.
+		api.observe('notify', self.emitSocketEvent) #observe_future_only is required for QDBusMessage types, since the non-future version emits the value verbatim instead of wrapped. In addition, because we don't have anything connected to us at this point to recieve events, there is no point firing them.
 		
 	@pyqtSlot('QDBusMessage')
-	def emitSocketEvent(self, msg):
-		print('emitting', self.key, msg)
-		sio.emit(self.key, msg, room=self.key)
+	def emitSocketEvent(self, msgs):
+		print('hello', msgs)
+		for key, value in msgs.items(): #SocketIO should handle re-chunking for us, and handles subscription filtering.
+			print('emitting', key, value)
+			sio.emit(key, value, room=key)
 	
-__wrappers = [] #Keep a reference to the wrapper objects. Without it, the callbacks stop getting called.
-for key in availableKeys:
-	if key not in apiValueBlacklist:
-		__wrappers += [MessageWrapper(key)]
+#Keep a reference to the wrapper objects. Without it, the callbacks stop getting called.
+notifyWrapper = MessageWrapper('notify')
 
 
 
