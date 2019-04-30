@@ -13,8 +13,11 @@ socket.emit('get', ['cameraDescription'], reply => {
 })
 
 
-socket.on('cameraDescription', cameraDescription => {
-	document.querySelector('#currentCameraDescription').textContent = cameraDescription
+socket.on('notify', change => {
+	console.info('notification of change', change)
+	if(change.cameraDescription) {
+		document.querySelector('#currentCameraDescription').textContent = change.cameraDescription
+	}
 })
 
 socket.on('message', data => console.log('message', data))

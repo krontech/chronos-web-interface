@@ -66,6 +66,7 @@ import re
 import signal
 import faulthandler
 import sys
+from collections import defaultdict
 
 from PyQt5.QtCore import pyqtSlot, QObject, QRunnable, QThreadPool
 
@@ -456,6 +457,8 @@ def wsApiSetProxy(sid, data):
 		}, room=sid)
 
 
+wsSubscriptions = defaultdict(set)
+
 @sio.on('subscribe')
 @wsLoginRequired
 def subscribeToValueUpdates(sid, keys):
@@ -491,9 +494,8 @@ def subscribeToValueUpdates(sid, keys):
 		pass #No unknown keys found.
 	
 	for key in keys:
-		print(f'subscribed {sid} to {key}')
-		sio.enter_room(sid, key)
-		sio.emit(key, api.get(key), room=sid)
+		wsSubscriptions[sid].add(key)
+		sio.emit('notify', {key: api.get(key)}, room=sid)
 
 
 #Turn D-Bus value-updated messages into Websocket value-updated messages.
@@ -502,18 +504,21 @@ class MessageWrapper(QObject):
 	
 	def __init__(self, key):
 		super().__init__()
-		self.key = key
-		api.observe_future_only(key, self.emitSocketEvent) #observe_future_only is required for QDBusMessage types, since the non-future version emits the value verbatim instead of wrapped. In addition, because we don't have anything connected to us at this point to recieve events, there is no point firing them.
+		api.observe('notify', self.emitSocketEvent) #observe_future_only is required for QDBusMessage types, since the non-future version emits the value verbatim instead of wrapped. In addition, because we don't have anything connected to us at this point to recieve events, there is no point firing them.
 		
 	@pyqtSlot('QDBusMessage')
-	def emitSocketEvent(self, msg):
-		print('emitting', self.key, msg)
-		sio.emit(self.key, msg, room=self.key)
+	def emitSocketEvent(self, values):
+		for sid in wsSubscriptions:
+			values = { #Subscription filtering.
+				key: value 
+				for key, value in values.items()
+				if key in wsSubscriptions[sid]
+			}
+			if values:
+				sio.emit('notify', values, room=sid)
 	
-__wrappers = [] #Keep a reference to the wrapper objects. Without it, the callbacks stop getting called.
-for key in availableKeys:
-	if key not in apiValueBlacklist:
-		__wrappers += [MessageWrapper(key)]
+#Keep a reference to the wrapper objects. Without it, the callbacks stop getting called.
+notifyWrapper = MessageWrapper('notify')
 
 
 

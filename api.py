@@ -148,15 +148,14 @@ class APIValues(QObject):
 		
 		self._callbacks = {}
 		
-		for key in _camState.keys():
-			QDBusConnection.systemBus().connect(
-				f"com.krontech.chronos.{'control_mock' if USE_MOCK else 'control'}", 
-				f"/com/krontech/chronos/{'control_mock' if USE_MOCK else 'control'}",
-				f"",
-				key, 
-				self.__newKeyValue,
-			)
-			self._callbacks[key] = []
+		QDBusConnection.systemBus().connect(
+			f"com.krontech.chronos.{'control_mock' if USE_MOCK else 'control'}", 
+			f"/com/krontech/chronos/{'control_mock' if USE_MOCK else 'control'}",
+			f"",
+			'notify', 
+			self.__newKeyValue,
+		)
+		self._callbacks['notify'] = []
 	
 	def observe(self, key, callback):
 		"""Add a function to get called when a value is updated."""
@@ -180,12 +179,8 @@ apiValues = APIValues()
 
 
 def observe(name: str, callback: Callable[[Any], None]) -> None:
-	callback(apiValues.get(name))
 	apiValues.observe(name, callback)
-
-
-def observe_future_only(name: str, callback: Callable[[Any], None]) -> None:
-	apiValues.observe(name, callback)
+	
 
 
 
