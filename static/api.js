@@ -1,5 +1,6 @@
 "use strict"
 
+/*
 const socket = io();
 
 socket.on('connect', () => {
@@ -18,7 +19,7 @@ socket.on('cameraDescription', cameraDescription => {
 })
 
 socket.on('message', data => console.log('message', data))
-
+*/
 
 document.querySelector('#setCameraDescriptionHTTP').addEventListener('click', () => {
 	fetch('/api/0.1.0/set', {
@@ -31,7 +32,15 @@ document.querySelector('#setCameraDescriptionHTTP').addEventListener('click', ()
 	.then(reply => console.info('http reply', reply))
 })
 
+/*
 document.querySelector('#setCameraDescriptionWS').addEventListener('click', () =>
 	socket.emit('set', {cameraDescription: 'test 2'}, function(reply) {
 		console.info('ws reply', reply)
 	}) )
+*/
+
+//This doesn't work, it freezes the flask app:
+const evtSrc = new EventSource("/subscribe");
+evtSrc.onmessage = function(e) {
+	console.info('SSE', e.data);
+};

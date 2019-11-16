@@ -1,8 +1,9 @@
-On the Chronos, run the following to set up for this project:
+On the Chronos, run the following to set up for this project, after setting up gui2:
 
-> mkdir /opt/camera/chronos-web-interface
-> cd /opt/camera/chronos-web-interface
-> ln -s /opt/camera/chronos-web-interface ~/web
-> pip3 install flask eventlet python-socketio
+> mkdir ~/web
+> cd ~/web
+> apt install python3-aiohttp
 
-Then, deploy & run the app.
+Then, deploy & run the app. You can do this by copying or
+by running ~`util/watch-computer.sh`, if your ssh config
+is set up so you can `ssh cam` and get to the camera.
