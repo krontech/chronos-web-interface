@@ -441,8 +441,12 @@ class control():
 			try:
 				if reply.isError():
 					if self._catches:
+						error = reply.error()
 						for catch in self._catches:
-							catch(reply.error())
+							try:
+								error = catch(error)
+							except Exception as e:
+								error = e
 					else:
 						#This won't do much, but (I'm assuming) most calls simply won't ever fail.
 						if reply.error().name() == 'org.freedesktop.DBus.Error.NoReply':
@@ -452,7 +456,17 @@ class control():
 				else:
 					value = reply.value()
 					for then in self._thens:
-						value = then(value)
+						try:
+							value = then(value)
+						except Exception as error:
+							if self._catches:
+								for catch in self._catches:
+									try:
+										error = catch(error)
+									except Exception as e:
+										error = e
+							else:
+								raise e
 			except Exception as e:
 				raise e
 			finally:

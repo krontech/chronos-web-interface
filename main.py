@@ -56,6 +56,7 @@ Examples:
 
 import asyncio
 from aiohttp import web #https://docs.aiohttp.org/en/v0.17.2
+import urllib
 import json
 from hashlib import sha256
 from hmac import compare_digest
@@ -64,9 +65,8 @@ import re
 import signal
 import faulthandler
 import sys, os
-import queue
 
-from PyQt5.QtCore import QObject, QCoreApplication, QThreadPool, QSettings, pyqtSlot, QRunnable
+from PyQt5.QtCore import QObject, QCoreApplication, QThreadPool
 
 from debugger import *; dbg
 import api
@@ -79,6 +79,7 @@ threadpool = QThreadPool()
 
 HTTPPort = 80 #TODO: Load this from env var
 
+indexHTML = open('app/index.html', 'rb')
 
 
 ############################################
@@ -214,22 +215,47 @@ def wsLoginRequired(handler):
 #   HTTP and WS API Endpoints   #
 #################################
 
+def getRequestParams(request):
+	if request.method not in ('GET', 'POST'):
+		raise ValueError(f"Unsupported method {request.method}; use GET or POST.")
+	
+	params = [
+		json.loads(urllib.parse.unquote(param))
+		for param in request.query_string.split('&')
+		if param
+	]
+	
+	if request.method == 'POST':
+		additionalParams = yield from request.post()
+		if additionalParams:
+			for key, value in additionalParams.items():
+				params.push(
+					json.loads(value) )
+	
+	return params
+
+
+def errorResponse(message: str):
+	return web.Response(
+		status=500, 
+		content_type='text/plain; charset=utf-8',
+		body=bytes(message, 'utf8'),
+	)
+
 
 @asyncio.coroutine
 def subscribe(request):
-	name = request.match_info.get('name', "Anonymous")
 	response = web.StreamResponse()
-	response.content_type = 'text/event-stream'
+	response.content_type = 'text/event-stream; charset=utf-8'
 	#response.enable_compression() #Don't do this, stops events from sending.
 	response.start(request)
-	#response.write(b"Hello, " + bytes(name, 'utf8'))
 	
 	future = asyncio.Future()
 	def writeResponse(key, value):
 		if response._req.transport._protocol: #The connection closed error ("socket.send() raised exception.") does not propagate up to us here in this version, merely appearing on the console. It was fixed shortly after this release of aiohttp, v0.17.2. Currently, v3.6.2 is available, which does have the bug fixed among several other proper solutions.
 			response.write(
-				b'event: '+bytes(key, 'utf8')+b'\n'+
-				b'data: '+bytes(json.dumps(value), 'utf8')+b'\n'+
+				b'event: ' + bytes(key, 'utf8') + b'\n' + 
+				b'data: ' + bytes(json.dumps(value), 'utf8') + b'\n' + 
 				b'\n')
 		else: #Not connected.
 			api.apiValues.unobserve('all', writeResponse)
@@ -240,27 +266,96 @@ def subscribe(request):
 
 @asyncio.coroutine
 def handle(request):
-	name = request.match_info.get('name', "Anonymous")
-	return web.Response(body=bytes(f"Hello, {name}", 'utf8'))
+	name = request.match_info.get('name', '')
+	if not name:
+		return errorResponse(b"No function call specified. Try /v0/get?")
+	
+	try:
+		params = yield from getRequestParams(request)
+	except Exception as e:
+		return errorResponse(f"Could not parse JSON request parameters.\n{type(e).__name__}: {e}")
+	
+	if name == 'webApiVersion':
+		if len(params):
+			return errorResponse(b"webApiVersion does not accept paramaters.")
+		return web.Response(body=bytes(json.dumps([0,0,1,'']), 'utf8')) #eg, 1.3.0-rc1
+	
+	if name not in availableCalls:
+		return errorResponse("No function exists by this name. 😕")
+	
+	
+	response = web.StreamResponse()
+	#response.content_type = 'text/json; charset=utf-8'
+	##response.enable_compression()
+	#response.start(request)
+	##response.write(b"Hello, " + bytes(name, 'utf8'))
+	
+	future = asyncio.Future()
+	#@asyncio.coroutine
+	def writeResponse(resp):
+		future.set_result(True)
+		future.done()
+		
+		response.content_type = 'text/json; charset=utf-8'
+		len(resp) > 10 and response.enable_compression() #Short requests don't have enough data to warrant compressing.
+		response.start(request)
+		if not response._req.transport._protocol: #The connection closed error ("socket.send() raised exception.") does not propagate up to us here in this version, merely appearing on the console. It was fixed shortly after this release of aiohttp, v0.17.2. Currently, v3.6.2 is available, which does have the bug fixed among several other proper solutions.
+			return future.cancel() #Not still connected to client.
+		response.write(bytes(json.dumps(resp), 'utf8'))
+		#yield from response.write_eof() #This prevents the request from being returned.
+	
+	def writeError(err):
+		future.set_result(False)
+		future.done()
+		
+		response.content_type = 'text/plain; charset=utf-8'
+		response.start(request)
+		if not response._req.transport._protocol: #The connection closed error ("socket.send() raised exception.") does not propagate up to us here in this version, merely appearing on the console. It was fixed shortly after this release of aiohttp, v0.17.2. Currently, v3.6.2 is available, which does have the bug fixed among several other proper solutions.
+			return future.cancel() #Not still connected to client.
+		response.write(bytes(f"{type(err).__name__}: {err}", 'utf8'))
+	
+	if name == 'get': #Override get/set with our nicer versions.
+		api.get(*params).then(writeResponse).catch(writeError)
+	elif name == 'set':
+		api.get(*params).then(writeResponse).catch(writeError)
+	else:
+		api.control.call(name, *params).then(writeResponse).catch(writeError)
+	
+	yield from getattr(asyncio, 'async')(future) #asyncio.async() was deprecated for ensure_future on December 6th, 2015 by Python 3.4.4. We're on the October 8th, 2014 release, 3.4.2, so this hasn't happened yet. (See https://docs.python.org/3.4/library/asyncio-task.html#asyncio.ensure_future for details.) This may throw an error when we upgrade Python because async is a keyword now, but using getattr it is at least valid Python syntax.
+	return response
+
 
 #request.protocol.transport.is_closing())
 #response._req.transport._protocol.is_connected()
 @asyncio.coroutine
-def init(loop):
+def init1(loop):
 	app = web.Application(loop=loop)
-	app.router.add_route('GET', '/subscribe', subscribe)
-	app.router.add_route('GET', '/{name}', handle)
+	
+	#Call API functions and observe values.
+	app.router.add_route('*', '/v0/subscribe', subscribe)
+	app.router.add_route('*', '/v0/{name}', handle)
+	
+	#Serve the web app.
+	app.router.add_route('GET', '/', lambda _:
+		web.Response(status=301, headers={ 'Location':'/app' }) )
+	app.router.add_route('GET', '/app', lambda _: web.Response(
+		headers={ 'Content-Type':'text/html; charset=utf-8' },
+		body=indexHTML.seek(0) or indexHTML.read(),
+	))
+	app.router.add_static('/app', 'app/', name="static app files")
+	
 	
 	srv = yield from loop.create_server(app.make_handler(),
 		'0.0.0.0', settings.value('port', 80))
 	print(f"Server started on {settings.value('port', 80)}")
 	return srv
-	
+
+
 @asyncio.coroutine
 def init2():
 	while True:
 		yield QCoreApplication.processEvents()
-		yield asyncio.sleep(0.1)
+		yield from asyncio.sleep(0.1)
 
 
 #----------------
@@ -279,43 +374,6 @@ def encode(self):
 	
 	return "%s\n\n" % "\n".join(lines)
 
-
-subscriptions = [] #[{'filter': callable(str needle), 'callback': callable()}, ...]
-#@app.route("/subscribe")
-def subscribe():
-	keys = request.args.keys()[:]
-	subscriptions.push({
-		'filter': lambda needle: needle in keys,
-		'callback': lambda: 0,
-	})
-	
-	class Response(QRunnable):
-		def run(self):
-			app.run('0.0.0.0', port=HTTPPort)
-	
-	threadpool.start(Response(keys))
-	
-	return Response(generate(), mimetype="text/event-stream")
-	
-	def generate():
-		print('start 2')
-		q = queue.Queue()
-		sseSubscriptions.append(q)
-		try:
-			while True:
-				print('awaiting result')
-				result = q.get()
-				print('got result', result)
-				ev = ServerSentEvent(str(result))
-				yield ev.encode()
-		except GeneratorExit: # Or maybe use flask signals
-			print('done with sse sub')
-			subscriptions.remove(q)
-		print('done 2')
-
-
-api.apiValues.observe('all', lambda key, value:
-	print('new data', key, value) )
 
 
 ##################
@@ -336,10 +394,10 @@ if __name__ == '__main__':
 	#threadpool.start(Worker())
 	#sys.exit(qtApp.exec_())
 	
-	asyncio.async(init2())
+	getattr(asyncio, 'async')(init2())
 	
 	loop = asyncio.get_event_loop()
-	loop.run_until_complete(init(loop))
+	loop.run_until_complete(init1(loop))
 	try:
 		loop.run_forever()
 	except KeyboardInterrupt:
