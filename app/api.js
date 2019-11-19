@@ -40,7 +40,7 @@ document.querySelector('#setCameraDescriptionWS').addEventListener('click', () =
 */
 
 //This doesn't work, it freezes the flask app:
-const evtSrc = new EventSource("/subscribe");
+const evtSrc = new EventSource("/v0/subscribe");
 evtSrc.onmessage = function(e) {
 	console.info('SSE', e.data);
 };
