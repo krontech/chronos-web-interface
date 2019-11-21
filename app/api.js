@@ -22,7 +22,7 @@ socket.on('message', data => console.log('message', data))
 */
 
 document.querySelector('#setCameraDescriptionHTTP').addEventListener('click', () => {
-	fetch('/api/0.1.0/set', {
+	fetch('/v0/set', {
 		method: "POST",
 		cache: "no-cache",
 		credentials: "same-origin",
