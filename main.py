@@ -65,6 +65,7 @@ import re
 import signal
 import faulthandler
 import sys, os
+import binascii
 
 from PyQt5.QtCore import QObject, QCoreApplication, QThreadPool
 
@@ -77,20 +78,8 @@ faulthandler.enable() #Print backtraces in case of crash. (sigsegv & co)
 qtApp = QCoreApplication(sys.argv)
 threadpool = QThreadPool()
 
-HTTPPort = 80 #TODO: Load this from env var
-
 indexHTML = open('app/index.html', 'rb')
 
-
-############################################
-#   Constants, Functions, and Decorators   #
-############################################
-
-
-apiValueBlacklist = { #Don't expose these values via get or set, for security and safety.
-}
-apiFunctionBlacklist = { #Don't expose these functions via HTTP, for security and safety.
-}
 
 availableCalls = re.findall(
 	"""\s*?(\w*?)\(""",
@@ -101,28 +90,39 @@ availableCalls = re.findall(
 availableCalls.remove('notify') #Imperfect regex, fix by using dbus introspection or adding the availableMethods call + data to the API. (We need a bit more data to select the right API method, some just get information and can be cached as a GET.)
 availableKeys = api.control.callSync('availableKeys')
 
-def parseJson(string, fallback=None) -> any:
-	"""Parse json, optionally falling back to a value."""
-	
-	try:
-		return json.loads(string)
-	except ValueError as err:
-		dbg()
-		if fallback != None:
-			return fallback
-		else:
-			raise err
 
 
-def httpError(code:int, message:any):
-	"""Generate a flask json error reply. Message can be a str or Exception."""
+def errorResponse(message: str):
+	return web.Response(
+		status=500, 
+		content_type='text/plain; charset=utf-8',
+		body=bytes(message, 'utf8'),
+	)
+
+
+
+def getRequestParams(request):
+	if request.method not in ('GET', 'POST'):
+		raise ValueError(f"Unsupported method {request.method}; use GET or POST.")
 	
-	if not code or not message:
-		raise ValueError('jsonError(…) requires a http error code and an explanatory message.')
+	params = [
+		json.loads(urllib.parse.unquote(param))
+		for param in request.query_string.split('&')
+		if param
+	]
 	
-	err = jsonify({'message': str(message)})
-	err.status_code = code
-	return err
+	
+	if request.method == 'POST':
+		postData = yield from request.json()
+		params += postData if type(postData) is list else [postData]
+	
+	return params
+
+
+
+###############################
+#   Authentication Routines   #
+###############################
 
 
 class NetworkPassword(QObject):
@@ -138,15 +138,27 @@ class NetworkPassword(QObject):
 		self.networkPasswordChanged()
 		signal.signal(signal.SIGHUP,
 			lambda signum, frame: self.networkPasswordChanged() )
-		
-	#@pyqtSlot(str)
+	
+	
 	def networkPasswordChanged(self) -> None:
 		try:
-			self.hashedPassword = bytes(settings.value('password', 'chronos'), 'utf8')
+			#Defaults to "chronos", for now. We should not do this because we don't want a default password, let alone such a bad one.
+			self.hashedPassword = bytes.fromhex(
+				settings.value(
+					'password', 
+					binascii.hexlify(
+						sha256(
+							self.serial + 
+							sha256(bytes('chronos', 'utf-8')).digest()
+						).digest()
+					).decode('utf-8')
+				)
+			)
 			print('network password updated to', self.hashedPassword)
 		except Exception as e:
 			print('Could not update password:', e)
 			self.hashedPassword = bytes()
+	
 	
 	def equals(self, passwordHashHexString: str) -> bool:
 		"""Compare the provided password against the camera's password.
@@ -159,7 +171,7 @@ class NetworkPassword(QObject):
 			raise ValueError('password is not a sha256 hex-encoded string')
 		
 		if not self.hashedPassword:
-			print('authentication can not succeed without a set password')
+			print('authentication can not succeed without a password set on the camera')
 			return False
 		
 		
@@ -171,79 +183,98 @@ class NetworkPassword(QObject):
 			self.hashedPassword,
 			sha256(self.serial + bytes.fromhex(passwordHashHexString)).digest()
 		)
-
 networkPassword = NetworkPassword()
 
 
-def httpLoginRequired(handler):
+
+@asyncio.coroutine
+def authenticate(request):
+	"""Set a cookie which authenticates you with the API.
+		
+		Accepts a json-encoded string. The string is the result of
+		hex- encoding the sha-256 hashed access password plus the
+		camera serial number. (See the NetworkPassword class for
+		implementation details.) This hash is compared to the hash of
+		the password set in the App and Internet Access screen on the
+		camera. If the hashes match, a cookie is issued which
+		authenticates future API calls."""
+	
+	try:
+		params = yield from getRequestParams(request)
+	except Exception as e:
+		return errorResponse(f"Could not parse JSON request parameters.\n{type(e).__name__}: {e}")
+	
+	if len(params) == 0:
+		return errorResponse(f'No password provided to log in with.')
+	if len(params) > 1:
+		return errorResponse(f'Login passed too many args, {len(args)}, when only a hex-encoded sha-256 hashed password was expected.')
+	
+	if not networkPassword.equals(*params):
+		return web.Response(
+			content_type='text/json; charset=utf-8',
+			body=b'{"authenticated": false}',
+		)
+	
+	
+	resp = web.Response(
+		content_type='text/json; charset=utf-8',
+		body=b'{"authenticated": true}',
+	)
+	resp.set_cookie('password', *params, httponly=True) #samesite='None') not supported yet #Explicitly allow other websites to use the API too.
+	return resp
+
+
+@asyncio.coroutine
+def deauthenticate(request):
+	"""Remove the API authentication cookie set by authenticate()."""
+	
+	resp = web.Response(
+		content_type='text/json; charset=utf-8',
+		body=b'{"deauthenticated": true}',
+	)
+	resp.set_cookie('password', '«expired»', httponly=True, expires='Thu, 01 Jan 1970 00:00:00 GMT') #samesite='None') not supported yet #Explicitly allow other websites to use the API too.
+	return resp
+
+
+
+def authenticationRequired(handler):
 	"""Decorator which aborts the http request if not logged in."""
 	
 	@wraps(handler)
-	def httpAuthenticationDecoratedFunction(*args, **kwargs):
+	def httpAuthenticationDecoratedFunction(request):
 		if request.cookies.get('password') == None:
-			print('no authentication provided')
-			return ('', 401)
-		if not networkPassword.equals(request.cookies.get('password')):
-			print('unrecognised authentication provided')
-			return ('', 401)
-		return handler(*args, **kwargs)
+			return web.Response(
+				status = 401, 
+				content_type = 'text/plain; charset=utf-8',
+				body = b'no authentication provided',
+			)
+		try:
+			if not networkPassword.equals(request.cookies.get('password')):
+				return web.Response(
+					status = 401, 
+					content_type = 'text/plain; charset=utf-8',
+					body = b'unrecognised authentication provided',
+				)
+		except ValueError as err:
+			return web.Response(
+				status = 401, 
+				content_type = 'text/plain; charset=utf-8',
+				body = bytes(str(err), 'utf8'),
+			)
+		
+		return handler(request)
 	
 	return httpAuthenticationDecoratedFunction
 
 
-def wsLoginRequired(handler):
-	"""Decorator which aborts the websocket request if not logged in."""
-	
-	#@wraps(handler)
-	#def wsAuthenticationDecoratedFunction(sid, *args, **kwargs):
-	#	password = re.search('password=([0-9a-f]{64})', sio.environ[sid]['HTTP_COOKIE'])
-	#	if not password:
-	#		print('WS: no authentication provided')
-	#		return {'ERROR':'no authentication provided'} #This is legitimately the best I can come up with for errors. :|
-	#	elif not networkPassword.equals(password.groups(0)[0]):
-	#		print('WS: unrecognised authentication provided')
-	#		return {'ERROR':'unrecognised authentication provided'}
-	#	else:
-	#		return handler(sid, *args, **kwargs)
-	
-	return handler
 
-
-
-
-#################################
-#   HTTP and WS API Endpoints   #
-#################################
-
-def getRequestParams(request):
-	if request.method not in ('GET', 'POST'):
-		raise ValueError(f"Unsupported method {request.method}; use GET or POST.")
-	
-	params = [
-		json.loads(urllib.parse.unquote(param))
-		for param in request.query_string.split('&')
-		if param
-	]
-	
-	if request.method == 'POST':
-		additionalParams = yield from request.post()
-		if additionalParams:
-			for key, value in additionalParams.items():
-				params.push(
-					json.loads(value) )
-	
-	return params
-
-
-def errorResponse(message: str):
-	return web.Response(
-		status=500, 
-		content_type='text/plain; charset=utf-8',
-		body=bytes(message, 'utf8'),
-	)
+###################
+#   API Proxies   #
+###################
 
 
 @asyncio.coroutine
+@authenticationRequired
 def subscribe(request):
 	response = web.StreamResponse()
 	response.content_type = 'text/event-stream; charset=utf-8'
@@ -264,7 +295,9 @@ def subscribe(request):
 	return future
 
 
+
 @asyncio.coroutine
+@authenticationRequired
 def handle(request):
 	name = request.match_info.get('name', '')
 	if not name:
@@ -317,7 +350,7 @@ def handle(request):
 	if name == 'get': #Override get/set with our nicer versions.
 		api.get(*params).then(writeResponse).catch(writeError)
 	elif name == 'set':
-		api.get(*params).then(writeResponse).catch(writeError)
+		api.set(*params).then(writeResponse).catch(writeError)
 	else:
 		api.control.call(name, *params).then(writeResponse).catch(writeError)
 	
@@ -325,15 +358,24 @@ def handle(request):
 	return response
 
 
+
+######################
+#   Initialization   #
+######################
+
+
 #request.protocol.transport.is_closing())
 #response._req.transport._protocol.is_connected()
 @asyncio.coroutine
 def init1(loop):
+	"""Start processing web events."""
 	app = web.Application(loop=loop)
 	
 	#Call API functions and observe values.
-	app.router.add_route('*', '/v0/subscribe', subscribe)
-	app.router.add_route('*', '/v0/{name}', handle)
+	app.router.add_route('POST', '/v0/authenticate',   authenticate)
+	app.router.add_route('POST', '/v0/deauthenticate', deauthenticate)
+	app.router.add_route('*',    '/v0/subscribe',      subscribe)
+	app.router.add_route('*',    '/v0/{name}',         handle)
 	
 	#Serve the web app.
 	app.router.add_route('GET', '/', lambda _:
@@ -346,33 +388,18 @@ def init1(loop):
 	
 	
 	srv = yield from loop.create_server(app.make_handler(),
-		'0.0.0.0', settings.value('port', 80))
-	print(f"Server started on {settings.value('port', 80)}")
+		'0.0.0.0', settings.value('port', settings.value('port', 80)))
+	print(f"Server started on {settings.value('port', settings.value('port', 80))}")
 	return srv
+
 
 
 @asyncio.coroutine
 def init2():
+	"""Start processing d-bus events."""
 	while True:
 		yield QCoreApplication.processEvents()
-		yield from asyncio.sleep(0.1)
-
-
-#----------------
-
-
-
-def encode(self):
-	if not self.data:
-		return ""
-	
-	lines = [
-		"%s: %s" % (v, k) 
-		for k, v in self.desc_map.iteritems()
-		if k
-	]
-	
-	return "%s\n\n" % "\n".join(lines)
+		yield from asyncio.sleep(1/30) #of one second
 
 
 
