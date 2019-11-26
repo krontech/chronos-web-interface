@@ -1,19 +1,10 @@
-# -*- coding: future_fstrings -*-
+"""A little wrapper class for a read-only QSettings."""
 
-"""Little wrapper class for QSettings which implements subscriptions.
-
-Observe a key with a callback, called when the key is changed or initialized.
-"""
-
-from collections import defaultdict
-from typing import Callable, Optional
 import json
-
 from PyQt5.QtCore import QSettings
 
 _restore = True #Turn to "false" to disable loading settings from file.
 _settings = QSettings('Krontech', 'web interface') #in ~/.config/Krontech/back-of-camera interface.conf
-_callbacks = defaultdict(list)
 
 #Read only.
 def value(key: str, default: any) -> any:

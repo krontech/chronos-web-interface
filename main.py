@@ -92,6 +92,15 @@ availableKeys = api.control.callSync('availableKeys')
 
 
 
+def hexHash(*, password: str):
+	return binascii.hexlify(
+		sha256(
+			bytes(api.apiValues.get('cameraSerial'), 'utf-8') + 
+			sha256(bytes(password, 'utf-8')).digest()
+		).digest()
+	).decode('utf-8')
+
+
 def errorResponse(message: str):
 	return web.Response(
 		status=500, 
@@ -133,7 +142,7 @@ class NetworkPassword(QObject):
 	
 	def __init__(self):
 		super().__init__()
-		self.serial = bytes(api.getSync('cameraSerial'), 'utf-8')
+		self.serial = bytes(api.apiValues.get('cameraSerial'), 'utf-8')
 		self.hashedPassword = bytes()
 		self.networkPasswordChanged()
 		signal.signal(signal.SIGHUP,
@@ -143,16 +152,9 @@ class NetworkPassword(QObject):
 	def networkPasswordChanged(self) -> None:
 		try:
 			#Defaults to "chronos", for now. We should not do this because we don't want a default password, let alone such a bad one.
+			assert len(settings.value('password', '')), "Password must be given for web server to start. (Try setting this in the App & Internet Access screen on the camera.)"
 			self.hashedPassword = bytes.fromhex(
-				settings.value(
-					'password', 
-					binascii.hexlify(
-						sha256(
-							self.serial + 
-							sha256(bytes('chronos', 'utf-8')).digest()
-						).digest()
-					).decode('utf-8')
-				)
+				settings.value('password')# or hexHash(password="chronos")
 			)
 			print('network password updated to', self.hashedPassword)
 		except Exception as e:
@@ -387,9 +389,12 @@ def init1(loop):
 	app.router.add_static('/app', 'app/', name="static app files")
 	
 	
-	srv = yield from loop.create_server(app.make_handler(),
-		'0.0.0.0', settings.value('port', settings.value('port', 80)))
-	print(f"Server started on {settings.value('port', settings.value('port', 80))}")
+	print(f"Server running on port {settings.value('port', 80)}.")
+	srv = yield from loop.create_server(
+		app.make_handler(),
+		'0.0.0.0',
+		settings.value('port', 80),
+	)
 	return srv
 
 
