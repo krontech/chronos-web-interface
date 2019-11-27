@@ -200,6 +200,8 @@ def authenticate(request):
 		camera. If the hashes match, a cookie is issued which
 		authenticates future API calls."""
 	
+	print(f'authenticate {request}')
+	
 	try:
 		params = yield from getRequestParams(request)
 	except Exception as e:
@@ -228,6 +230,8 @@ def authenticate(request):
 @asyncio.coroutine
 def deauthenticate(request):
 	"""Remove the API authentication cookie set by authenticate()."""
+	
+	print(f'deauthenticate {request}')
 	
 	resp = web.Response(
 		content_type='text/json; charset=utf-8',
@@ -277,10 +281,13 @@ def authenticationRequired(handler):
 @asyncio.coroutine
 @authenticationRequired
 def subscribe(request):
+	print(f'subscribe {request}')
+	
 	response = web.StreamResponse()
 	response.content_type = 'text/event-stream; charset=utf-8'
 	#response.enable_compression() #Don't do this, stops events from sending.
 	response.start(request)
+	response.write(b'\n') #Send something to... flush the headers, I guess, and thus let FF connect to the event stream? Whatever this does, it means FF can connect to the event stream.
 	
 	future = asyncio.Future()
 	def writeResponse(key, value):
@@ -300,6 +307,8 @@ def subscribe(request):
 @asyncio.coroutine
 @authenticationRequired
 def handle(request):
+	print(f'handle {request}')
+	
 	name = request.match_info.get('name', '')
 	if not name:
 		return errorResponse(b"No function call specified. Try /v0/get?")
