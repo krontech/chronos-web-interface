@@ -1,26 +1,5 @@
 "use strict"
 
-/*
-const socket = io();
-
-socket.on('connect', () => {
-	socket.emit('subscribe', ['cameraDescription'], reply =>
-		console.info('subscription reply', reply) )
-})
-
-socket.emit('get', ['cameraDescription'], reply => {
-	if(!reply) { return console.error('get cameraDescription failed') }
-	document.querySelector('#initialCameraDescription').textContent = reply.cameraDescription
-})
-
-
-socket.on('cameraDescription', cameraDescription => {
-	document.querySelector('#currentCameraDescription').textContent = cameraDescription
-})
-
-socket.on('message', data => console.log('message', data))
-*/
-
 document.querySelector('#setCameraDescriptionHTTP').addEventListener('click', () => {
 	fetch('/v0/set', {
 		method: "POST",
@@ -32,15 +11,53 @@ document.querySelector('#setCameraDescriptionHTTP').addEventListener('click', ()
 	.then(reply => console.info('http reply', reply))
 })
 
-/*
-document.querySelector('#setCameraDescriptionWS').addEventListener('click', () =>
-	socket.emit('set', {cameraDescription: 'test 2'}, function(reply) {
-		console.info('ws reply', reply)
-	}) )
-*/
+class Camera extends EventSource {
+	constructor() {
+		super("/v0/subscribe")
+		
+		this.addEventListener("open", evt => {
+			console.info('SSE OPEN', evt)
+		})
+		this.addEventListener("error", evt => {
+			console.info('SSE ERR', evt)
+		})
+		this.addEventListener("state", evt => {
+			console.info('SSE3', evt.data)
+		})
+	}
+	
+	async observe(property, callback) {
+		const initialValue = await fetch(`/v0/get?["${property}"]`, {
+			method: "GET",
+			cache: "no-cache",
+			credentials: "same-origin",
+			headers: {"Content-Type": "application/json; charset=utf-8"},
+		})
+		
+		callback(await initialValue.json())
+		this.addEventListener(property, callback)
+	}
+	
+	async get(propertyOrProperties) {
+		const url = `/v0/get?${encodeURIComponent(JSON.stringify(propertyOrProperties))}`
+		return await (await fetch(url, {
+			method: "GET",
+			cache: "no-cache",
+			credentials: "same-origin",
+			headers: {"Content-Type": "application/json; charset=utf-8"},
+		})).json()
+	}
+	
+	async set(...args) {
+		return await (await fetch('/v0/set', {
+			method: "POST",
+			cache: "no-cache",
+			credentials: "same-origin",
+			headers: {"Content-Type": "application/json; charset=utf-8"},
+			body: JSON.stringify(args.length == 1 ? args[0] : args),
+		})).json()
+	}
+}
 
-//This doesn't work, it freezes the flask app:
-const evtSrc = new EventSource("/v0/subscribe");
-evtSrc.onmessage = function(e) {
-	console.info('SSE', e.data);
-};
+const camera = new Camera()
+// use like await camera.set({zebraLevel: 1})
