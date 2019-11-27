@@ -1,0 +1,30 @@
+{
+  "name": "chronos-web-interface",
+  "version": "0.0.1",
+  "description": "The web app for the Krontech high-speed cameras.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/krontech/chronos-web-interface.git"
+  },
+  "keywords": [
+    "web-app",
+    "krontech",
+    "chronos",
+    "camera",
+    "gui",
+    "ui"
+  ],
+  "author": "Kron Technologies, Inc.",
+  "license": "SEE LICENSE IN license.txt",
+  "bugs": {
+    "url": "https://github.com/krontech/chronos-web-interface/issues"
+  },
+  "homepage": "https://github.com/krontech/chronos-web-interface#readme",
+  "devDependencies": {
+    "eslint": "^6.7.1"
+  }
+}

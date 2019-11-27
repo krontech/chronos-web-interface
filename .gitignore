@@ -8,3 +8,5 @@
 
 # Ignore git version description file, uploaded to the camera for display in the about panel, UI Version string.
 git_description
+
+node_modules
