@@ -7,7 +7,15 @@
 		<script src="/app/common.js"></script>
 		<script defer src="/app/api.js"></script>
 		<script defer src="/app/index.js"></script>
-		<script defer src="/app/sha256.2017-11-19.js"></script>
+		
+		<script>
+			if (!crypto.subtle) {
+				const sha256Script = document.createElement('script')
+				sha256Script.setAttribute('defer', '')
+				sha256Script.setAttribute('src', '/app/sha256.2017-11-19.js')
+				document.head.appendChild(sha256Script)
+			}
+		</script>
 		
 		<link rel="stylesheet" href="/app/index.css"></link>
 	</head>
