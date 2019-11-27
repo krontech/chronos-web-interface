@@ -340,7 +340,7 @@ def handle(request):
 		future.done()
 		
 		response.content_type = 'text/json; charset=utf-8'
-		len(resp) > 10 and response.enable_compression() #Short requests don't have enough data to warrant compressing.
+		type(resp) in (list, dict) and len(resp) > 10 and response.enable_compression() #Short requests don't have enough data to warrant compressing.
 		response.start(request)
 		if not response._req.transport._protocol: #The connection closed error ("socket.send() raised exception.") does not propagate up to us here in this version, merely appearing on the console. It was fixed shortly after this release of aiohttp, v0.17.2. Currently, v3.6.2 is available, which does have the bug fixed among several other proper solutions.
 			return future.cancel() #Not still connected to client.
