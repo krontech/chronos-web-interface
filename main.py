@@ -152,10 +152,9 @@ class NetworkPassword(QObject):
 	def networkPasswordChanged(self) -> None:
 		try:
 			#Defaults to "chronos", for now. We should not do this because we don't want a default password, let alone such a bad one.
-			assert len(settings.value('password', '')), "Password must be given for web server to start. (Try setting this in the App & Internet Access screen on the camera.)"
-			self.hashedPassword = bytes.fromhex(
-				settings.value('password')# or hexHash(password="chronos")
-			)
+			password = settings.value('password', '')
+			assert password, "Password must be given for web server to start. (Try setting this in the App & Internet Access screen on the camera.)"
+			self.hashedPassword = bytes.fromhex(password) # or hexHash(password="chronos")
 			print('network password updated to', self.hashedPassword)
 		except Exception as e:
 			print('Could not update password:', e)
