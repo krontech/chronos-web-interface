@@ -21,18 +21,19 @@
 	</head>
 	<body>
 		<h1>Chronos 1.4 App</h1>
-		<p>password: <input id="password"/></p>
-		<p>Initial camera description: <span id=initialCameraDescription></span></p>
-		<p>Current camera description: <span id=currentCameraDescription></span></p>
 		<p>
-			Via HTTP:
-			<br>
-			<button id=setCameraDescriptionHTTP>set camera description to "test 1"</button>
-			<br>
-			<br>
-			Via WS:
-			<br>
-			<button id=setCameraDescriptionWS>set camera description to "test 2"</button>
+			<label id="log-in">password: <input id="password"/></label>
+			<button id="log-out">log out</button>
 		</p>
+		<table id="generated-input">
+			<thead>
+				<tr><th>Option</th><th>Setting</th></tr>
+			</thead>
+			<tbody>
+				<template>
+					<tr><td></td><td></td></tr>
+				</template> 
+			</tbody>
+		</table>
 	</body>
 </html>

@@ -18,3 +18,59 @@ body > * {
 body > table {
 	max-width: 975px;
 }
+
+
+table {
+	border-collapse: collapse; /*Fix transparent space between cells, where sticky elements weren't hiding content completely.*/
+}
+
+th {
+	position: sticky;
+	top: 0px;
+	background: white;
+	text-align: left;
+}
+
+th, td {
+	padding: 1ex;
+	vertical-align: top;
+}
+
+body > table thead > tr {
+	position: sticky;
+	top: 0;
+	background: white;
+}
+
+
+input, textarea {
+	width: 33vw;
+}
+
+input[type=checkbox] {
+	width: auto;
+}
+
+textarea {
+	height: 11vw;
+	white-space: nowrap;
+	overflow: auto;
+}
+
+
+/* API value states */
+.updated {
+	background-color: palegreen;
+}
+.error {
+	background-color: salmon;
+}
+.pending { /*Last, overrides the earlier statuses.*/
+	background-color: khaki;
+}
+
+
+/* Utility */
+.invisible {
+	display: none;
+}
