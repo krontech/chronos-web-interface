@@ -48,8 +48,8 @@
 			value: apiData[key],
 			meta: apiKeys[key], 
 		}))) {
-			const clone = document.importNode(template.content, true);
-			const slots = clone.querySelectorAll('td');
+			const clone = document.importNode(template.content, true)
+			const slots = clone.querySelectorAll('td')
 			
 			slots[0].textContent = entry.name
 			
@@ -62,7 +62,7 @@
 					camera.observe(entry.name, val=>input.checked=!!val, false)
 					input.addEventListener('change', async evt => updateWithData(
 						evt.target, entry.name, evt.target.checked ))
-					break;
+					break
 				
 				case 'number':
 					input = document.createElement('input')
@@ -72,7 +72,7 @@
 					camera.observe(entry.name, val=>input.value=val, false)
 					input.addEventListener('change', async evt => updateWithData(
 						evt.target, entry.name, parseFloat(evt.target.value) ))
-					break;
+					break
 				
 				case 'string':
 					input = document.createElement('input')
@@ -80,7 +80,7 @@
 					camera.observe(entry.name, val=>input.value=val, false)
 					input.addEventListener('change', async evt => updateWithData(
 						evt.target, entry.name, evt.target.value ))
-					break;
+					break
 				
 				case 'object':
 					input = document.createElement('textarea')
@@ -89,7 +89,7 @@
 						(val=>input.value=JSON.stringify(val, null, 4)), false)
 					input.addEventListener('change', async evt => updateWithData(
 						evt.target, entry.name, JSON.parse(evt.target.value) ))
-					break;
+					break
 				
 				default:
 					throw new Error(`unknown type ${typeof entry.value} for ${entry.value}`)
