@@ -1,10 +1,31 @@
 (() => {
 	"use strict"
+	let camera
 	
 	document.getElementById('log-out').classList.add('invisible')
 	
+	
+	for(const button of document.querySelectorAll('#calls button')) {
+		button.addEventListener('click', async evt => {
+			const args = document.getElementById('call-input').value
+			try {
+				const results = await camera.call(
+					evt.target.textContent,
+					args && JSON.parse(args),
+				)
+				document.getElementById('call-output').value =
+					JSON.stringify(results, null, 4)
+			} catch (err) {
+				document.getElementById('call-output').value =
+					`client-side error:\n${err}`
+			}
+		})
+	}
+	
+	
+	
 	const generateInputs = async ()=>{
-		const camera = new Camera() //from api.js
+		camera = new Camera() //from api.js
 		const table = document.querySelector('#generated-input')
 		const tableBody = table.querySelector('tbody')
 		const template = table.querySelector('template')

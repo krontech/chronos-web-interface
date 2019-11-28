@@ -25,6 +25,40 @@
 			<label id="log-in">password: <input id="password"/></label>
 			<button id="log-out">log out</button>
 		</p>
+		
+		
+		
+		<h2>Calls</h2>
+		<div id=calls>
+			<label>Call Args (JSON)<br>
+				<textarea id="call-input"></textarea>
+			</label>
+			<label>Call Response<br>
+				<textarea id="call-output"></textarea>
+			</label>
+			<table>
+				<tbody>
+					<tr><td><button>get</button>                        </td><td>Retrieve one or more parameters from the control API.</td></tr>
+					<tr><td><button>set</button>                        </td><td>Modify one or more parameters in the control API.</td></tr>
+					<tr><td><button>startAutoWhiteBalance</button>      </td><td>Take a reference image from the live display and compute the white balance.</td></tr>
+					<tr><td><button>revertAutoWhiteBalance</button>     </td><td>This copies the contents of `wbCustomColor` into `wbColor`.</td></tr>
+					<tr><td><button>startAutoFocus</button>             </td><td>Attempt to automatically focus the camera on a subject.</td></tr>
+					<tr><td><button>startCalibration</button>           </td><td>Perform full calibration operations. Dict can have `blackCal`, `analogCal`, ior `zeroTimeBlackCal` set to true or false.</td></tr>
+					<tr><td><button>startRecording</button>             </td><td>Begin recording video data to memory.</td></tr>
+					<tr><td><button>stopRecording</button>              </td><td>Terimnate recording of video data to memory.</td></tr>
+					<tr><td><button>flushRecording</button>             </td><td>Flush recoreded video data from memory.</td></tr>
+					<tr><td><button>startFilesave</button>              </td><td>TBD: A proxy for the `filesave` method in the Video API.</td></tr>
+					<tr><td><button>softTrigger</button>                </td><td>Generate a software trigger event.</td></tr>
+					<tr><td><button>revertToDefaults</button>           </td><td>Revert all settings to their default values (with optional parameter overrides).</td></tr>
+					<tr><td><button>softReset</button>                  </td><td>Perform a soft reset and initialization of the FPGA and image sensor.</td></tr>
+					<tr><td><button>getResolutionTimingLimits</button>  </td><td>Test if a resolution is valid and return the timing limits (framerate) at that resolution. Example: `call --system --dest ca.krontech.chronos.control --object-path /ca/krontech/chronos/control --method ca.krontech.chronos.control.getResolutionTimingLimits "{'hRes': <1280>, 'vRes': <1020>}"` → `({'minFramePeriod': <931277>, 'exposureMin': <1000>, 'cameraMaxFrames': <17542>, 'exposureMax': <925722>},)`. Maximum framerate is `1e9 / minFramePeriod`.</td></tr>
+				</tbody>
+			</table>
+			</div>
+		</div>
+		
+		
+		<h2>Properties</h2>
 		<table id="generated-input">
 			<thead>
 				<tr><th>Option</th><th>Setting</th></tr>
